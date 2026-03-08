@@ -1,6 +1,7 @@
 // dashboard is a server component so we can fetch current user + their interviews
 import Link from "next/link";
 import Image from "next/image";
+import { redirect } from "next/navigation";
 import {
   Facebook,
   Github,
@@ -11,17 +12,38 @@ import {
 
 import { Button } from "@/components/ui/button";
 import InterviewCard from "@/components/InterviewCard";
-import { getCurrentUser } from "@/lib/actions/auth.action";
-import { getInterviewsByUserId } from "@/lib/actions/general.action";
-import { dummyInterviews } from "@/constants";
+import { getCurrentUser, signOut } from "@/lib/actions/auth.action";
+import {
+  ensureDefaultInterviewsForUser,
+  getInterviewsByUserId,
+} from "@/lib/actions/general.action";
 
 const Page = async () => {
+  const logout = async () => {
+    "use server";
+
+    await signOut();
+    redirect("/sign-in");
+  };
+
   const user = await getCurrentUser();
-  const interviews = user?.id && (await getInterviewsByUserId(user.id));
-  const showDemo = !interviews || interviews.length === 0;
+  let interviews: Interview[] | null = null;
+
+  if (user?.id) {
+    await ensureDefaultInterviewsForUser(user.id);
+    interviews = await getInterviewsByUserId(user.id);
+  }
 
   return (
     <>
+      <section className="flex justify-end">
+        <form action={logout}>
+          <Button type="submit" className="btn">
+            Logout
+          </Button>
+        </form>
+      </section>
+
       <section className="card-cta">
         <div className="flex flex-col gap-6 max-w-lg">
           <h2>Get Interview-Ready with AI-Powered Practice & Feedback</h2>
@@ -43,20 +65,6 @@ const Page = async () => {
         />
       </section>
 
-      {showDemo && (
-        <section className="flex flex-col gap-6 mt-8">
-          <h2>Your Interviews</h2>
-          <div className="interviews-section">
-            {dummyInterviews.map((interview, idx) => (
-              <InterviewCard
-                interviewId={`demo-${idx}`}
-                {...interview}
-                key={interview.id}
-              />
-            ))}
-          </div>
-        </section>
-      )}
       {interviews && interviews.length > 0 && (
         <section className="flex flex-col gap-6 mt-8">
           <h2>Your Interviews</h2>

@@ -4,7 +4,7 @@ import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 
 import { db } from "@/firebase/admin";
-import { feedbackSchema } from "@/constants";
+import { feedbackSchema, interviewTemplates } from "@/constants";
 import { getInterviewCoverBySeed } from "@/lib/utils";
 
 const DEFAULT_FEEDBACK_CATEGORIES = [
@@ -238,6 +238,44 @@ export async function getInterviewsByUserId(
     id: doc.id,
     ...doc.data(),
   })) as Interview[];
+}
+
+export async function ensureDefaultInterviewsForUser(userId: string) {
+  try {
+    const existing = await db
+      .collection("interviews")
+      .where("userId", "==", userId)
+      .limit(1)
+      .get();
+
+    if (!existing.empty) return;
+
+    const batch = db.batch();
+    const baseTime = Date.now();
+
+    interviewTemplates.forEach((template, index) => {
+      const createdAt = new Date(baseTime - index * 60_000).toISOString();
+      const docRef = db.collection("interviews").doc();
+
+      batch.set(docRef, {
+        role: template.role,
+        type: template.type,
+        level: template.level,
+        techstack: template.techstack,
+        questions: template.questions,
+        userId,
+        finalized: true,
+        createdAt,
+        coverImage: getInterviewCoverBySeed(
+          `${userId}-${createdAt}-${template.role}`,
+        ),
+      });
+    });
+
+    await batch.commit();
+  } catch (error) {
+    console.error("Error seeding default interviews:", error);
+  }
 }
 
 export async function createInterviewSession(params: {
