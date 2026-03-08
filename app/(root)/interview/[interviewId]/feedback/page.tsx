@@ -4,14 +4,14 @@ import StarRating from "@/components/StarRating";
 import Link from "next/link";
 
 interface PageProps {
-  params: {
+  params: Promise<{
     interviewId: string;
-  };
+  }>;
 }
 
 const Page = async ({ params }: PageProps) => {
   const user = await getCurrentUser();
-  const interviewId = params.interviewId;
+  const { interviewId } = await params;
   let feedback = null;
 
   if (user && interviewId) {
@@ -117,10 +117,10 @@ const Page = async ({ params }: PageProps) => {
       </section>
 
       <Link
-        href="/"
+        href="/dashboard"
         className="inline-block rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 transition-colors"
       >
-        &larr; Back to homepage
+        &larr; Back to Dashboard
       </Link>
     </div>
   );

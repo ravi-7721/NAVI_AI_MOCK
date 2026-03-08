@@ -18,9 +18,18 @@ const Layout = async ({ children }: { children: ReactNode }) => {
             <h2 className="text-primary-100">Ai Interview Prepration</h2>
           </Link>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <Link href="/" className="btn-secondary !px-4 !min-h-9">
+              Homepage
+            </Link>
             <Link href="/dashboard" className="btn-secondary !px-4 !min-h-9">
               Dashboard
+            </Link>
+            <Link href="/leaderboard" className="btn-secondary !px-4 !min-h-9">
+              Leaderboard
+            </Link>
+            <Link href="/resume-lab" className="btn-secondary !px-4 !min-h-9">
+              Resume Lab
             </Link>
             <Link href="/questions" className="btn-secondary !px-4 !min-h-9">
               Questions

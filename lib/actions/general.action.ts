@@ -2,6 +2,7 @@
 
 import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
+import { z } from "zod";
 
 import { db } from "@/firebase/admin";
 import { feedbackSchema, interviewTemplates } from "@/constants";
@@ -422,5 +423,320 @@ export async function getQuestionBankByUserId(
   } catch (error) {
     console.error("Error getting question bank:", error);
     return [];
+  }
+}
+
+export async function getCompetitiveLeaderboard(
+  limit = 20,
+): Promise<LeaderboardEntry[]> {
+  try {
+    const [usersSnapshot, interviewsSnapshot, feedbackSnapshot] = await Promise.all([
+      db.collection("users").get(),
+      db.collection("interviews").get(),
+      db.collection("feedback").get(),
+    ]);
+
+    const users = new Map<
+      string,
+      {
+        name?: string;
+        email?: string;
+      }
+    >();
+
+    usersSnapshot.docs.forEach((doc) => {
+      const data = doc.data() as { name?: string; email?: string };
+      users.set(doc.id, {
+        name: data.name,
+        email: data.email,
+      });
+    });
+
+    const interviewsCount = new Map<string, number>();
+    interviewsSnapshot.docs.forEach((doc) => {
+      const data = doc.data() as { userId?: string };
+      const userId = data.userId;
+      if (!userId) return;
+      interviewsCount.set(userId, (interviewsCount.get(userId) || 0) + 1);
+    });
+
+    const feedbackByUser = new Map<
+      string,
+      Array<{ totalScore: number; createdAt: string }>
+    >();
+    feedbackSnapshot.docs.forEach((doc) => {
+      const data = doc.data() as { userId?: string; totalScore?: number; createdAt?: string };
+      if (!data.userId) return;
+
+      const existing = feedbackByUser.get(data.userId) || [];
+      existing.push({
+        totalScore: Number(data.totalScore || 0),
+        createdAt: data.createdAt || "",
+      });
+      feedbackByUser.set(data.userId, existing);
+    });
+
+    const allUserIds = new Set<string>([
+      ...users.keys(),
+      ...interviewsCount.keys(),
+      ...feedbackByUser.keys(),
+    ]);
+
+    const entries: LeaderboardEntry[] = [...allUserIds].map((userId) => {
+      const user = users.get(userId);
+      const interviews = interviewsCount.get(userId) || 0;
+      const feedback = [...(feedbackByUser.get(userId) || [])].sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      );
+
+      const feedbackCount = feedback.length;
+      const averageScore =
+        feedbackCount > 0
+          ? Math.round(
+              feedback.reduce((sum, item) => sum + item.totalScore, 0) / feedbackCount,
+            )
+          : 0;
+
+      const improvementScore =
+        feedbackCount >= 2
+          ? Math.max(
+              0,
+              Math.round(feedback[feedbackCount - 1].totalScore - feedback[0].totalScore),
+            )
+          : 0;
+
+      const consistencyScore =
+        feedbackCount > 1
+          ? Math.max(
+              0,
+              Math.round(
+                100 -
+                  Math.sqrt(
+                    feedback.reduce(
+                      (sum, item) => sum + Math.pow(item.totalScore - averageScore, 2),
+                      0,
+                    ) / feedbackCount,
+                  ),
+              ),
+            )
+          : averageScore;
+
+      const competitiveScore = Math.round(
+        averageScore * 0.6 + consistencyScore * 0.25 + improvementScore * 0.15,
+      );
+
+      return {
+        rank: 0,
+        userId,
+        name: user?.name || "Anonymous",
+        email: user?.email,
+        interviews,
+        feedbackCount,
+        averageScore,
+        improvementScore,
+        consistencyScore,
+        competitiveScore,
+      };
+    });
+
+    return entries
+      .filter((entry) => entry.interviews > 0 || entry.feedbackCount > 0)
+      .sort((a, b) => {
+        if (b.competitiveScore !== a.competitiveScore)
+          return b.competitiveScore - a.competitiveScore;
+        if (b.averageScore !== a.averageScore) return b.averageScore - a.averageScore;
+        return b.interviews - a.interviews;
+      })
+      .slice(0, Math.max(1, limit))
+      .map((entry, idx) => ({
+        ...entry,
+        rank: idx + 1,
+      }));
+  } catch (error) {
+    console.error("Error building competitive leaderboard:", error);
+    return [];
+  }
+}
+
+const resumeInterviewSchema = z.object({
+  role: z.string().min(1),
+  level: z.enum(["Junior", "Mid", "Senior"]),
+  type: z.enum(["Technical", "Behavioral", "Mixed"]),
+  techstack: z.array(z.string().min(1)).min(2).max(10),
+  questions: z.array(z.string().min(1)).min(5).max(20),
+});
+
+const buildFallbackInterviewFromResume = (params: {
+  resumeText: string;
+  jobDescription?: string;
+  questionCount: number;
+}) => {
+  const { resumeText, jobDescription = "", questionCount } = params;
+  const text = `${resumeText}\n${jobDescription}`.toLowerCase();
+
+  let role = "Software Engineer";
+  if (/frontend|react|next\.js|ui/.test(text)) role = "Frontend Developer";
+  else if (/backend|api|node|express|spring|django/.test(text))
+    role = "Backend Developer";
+  else if (/data\s*science|machine learning|ml|ai/.test(text))
+    role = "ML Engineer";
+  else if (/full\s*stack/.test(text)) role = "Full Stack Developer";
+
+  const level: "Junior" | "Mid" | "Senior" = /lead|senior|architect|8\+|10\+/.test(text)
+    ? "Senior"
+    : /intern|fresher|entry|junior/.test(text)
+      ? "Junior"
+      : "Mid";
+
+  const techstack: string[] = [];
+  if (/react/.test(text)) techstack.push("React");
+  if (/next/.test(text)) techstack.push("Next.js");
+  if (/typescript/.test(text)) techstack.push("TypeScript");
+  if (/javascript/.test(text)) techstack.push("JavaScript");
+  if (/node/.test(text)) techstack.push("Node.js");
+  if (/python/.test(text)) techstack.push("Python");
+  if (/java/.test(text)) techstack.push("Java");
+  if (/sql|postgres|mysql/.test(text)) techstack.push("SQL");
+  if (/mongodb/.test(text)) techstack.push("MongoDB");
+  if (/aws|azure|gcp/.test(text)) techstack.push("Cloud");
+  if (techstack.length < 2) techstack.push("Problem Solving", "Communication");
+
+  const questionsPool = [
+    `Walk me through your most relevant project for a ${role} position.`,
+    "What was your biggest technical challenge recently, and how did you solve it?",
+    "How do you approach debugging when a production issue appears?",
+    "How do you ensure code quality and maintainability in your work?",
+    "Explain a trade-off decision you made in system or feature design.",
+    "How do you prioritize tasks when deadlines are tight?",
+    "Describe a time you received critical feedback and what you changed.",
+    "How do you collaborate with teammates across product, design, and QA?",
+    "Which parts of the target role or JD match your strongest skills?",
+    "What do you want to improve in the next 6 months, and how?",
+    `If hired as a ${role}, what would be your first 30-day plan?`,
+    "How do you validate performance and scalability before release?",
+    "Tell me about a failure in a project and what you learned from it.",
+    "How do you communicate complex technical ideas to non-technical stakeholders?",
+    "What makes you a strong fit for this specific opportunity?",
+  ];
+
+  const questions = questionsPool.slice(0, questionCount);
+
+  return {
+    role,
+    level,
+    type: "Mixed" as const,
+    techstack: [...new Set(techstack)].slice(0, 10),
+    questions,
+  };
+};
+
+export async function createInterviewFromResume(params: {
+  userId: string;
+  resumeText: string;
+  jobDescription?: string;
+  questionCount?: number;
+}) {
+  const { userId, resumeText, jobDescription = "", questionCount = 8 } = params;
+  const normalizedCount = Math.min(Math.max(questionCount, 5), 15);
+
+  if (!resumeText.trim()) {
+    return {
+      success: false as const,
+      message: "Resume text is required.",
+    };
+  }
+
+  try {
+    let generatedObject: z.infer<typeof resumeInterviewSchema> | null = null;
+
+    try {
+      const { object } = await generateObject({
+        model: google("gemini-2.0-flash-001"),
+        schema: resumeInterviewSchema,
+        prompt: `
+You are an expert interview designer.
+Create a targeted mock interview from the candidate profile and job description.
+
+Candidate Resume:
+${resumeText}
+
+Job Description:
+${jobDescription || "Not provided. Infer from resume profile."}
+
+Rules:
+- Return exactly ${normalizedCount} interview questions.
+- Questions must be specific, realistic, and evaluative.
+- Mix conceptual and practical questions.
+- Keep each question concise and clear.
+- Infer role/level/type based on resume + job description.
+`,
+        system:
+          "Generate structured interview sets from candidate profile details. Return schema-compliant output only.",
+      });
+
+      generatedObject = object;
+    } catch (generationError) {
+      console.error(
+        "AI resume interview generation failed, using deterministic fallback:",
+        generationError,
+      );
+    }
+
+    const fallback = buildFallbackInterviewFromResume({
+      resumeText,
+      jobDescription,
+      questionCount: normalizedCount,
+    });
+
+    const finalRole = generatedObject?.role?.trim() || fallback.role;
+    const finalLevel = generatedObject?.level || fallback.level;
+    const finalType = generatedObject?.type || fallback.type;
+    const finalTechstack =
+      generatedObject?.techstack?.filter(Boolean).slice(0, 10) || fallback.techstack;
+
+    const aiQuestions = generatedObject?.questions?.filter(Boolean) || [];
+    const fallbackQuestions = fallback.questions;
+    const mergedQuestions = [...aiQuestions];
+
+    for (const question of fallbackQuestions) {
+      if (mergedQuestions.length >= normalizedCount) break;
+      if (!mergedQuestions.includes(question)) mergedQuestions.push(question);
+    }
+
+    const finalQuestions = mergedQuestions.slice(0, normalizedCount);
+    if (finalQuestions.length < normalizedCount) {
+      return {
+        success: false as const,
+        message: "Could not generate required number of interview questions.",
+      };
+    }
+
+    const created = await createInterviewSession({
+      userId,
+      questions: finalQuestions,
+      role: finalRole,
+      level: finalLevel,
+      type: finalType,
+      techstack: finalTechstack,
+    });
+
+    if (!created.success) {
+      return {
+        success: false as const,
+        message: "Failed to create interview session.",
+      };
+    }
+
+    return {
+      success: true as const,
+      interviewId: created.interviewId,
+      role: finalRole,
+    };
+  } catch (error) {
+    console.error("Error creating interview from resume:", error);
+    return {
+      success: false as const,
+      message: "Unable to generate interview from resume. Please try again.",
+    };
   }
 }

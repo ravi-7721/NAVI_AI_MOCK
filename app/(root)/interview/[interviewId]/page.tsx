@@ -1,19 +1,20 @@
 import { getCurrentUser } from "@/lib/actions/auth.action";
 import { getInterviewById } from "@/lib/actions/general.action";
 import Agent from "@/components/Agent";
-import { getDisplayInterviewRole } from "@/lib/utils";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 
 interface PageProps {
-  params: {
+  params: Promise<{
     interviewId: string;
-  };
+  }>;
+  searchParams: Promise<{
+    autostart?: string;
+  }>;
 }
 
-const Page = async ({ params }: PageProps) => {
+const Page = async ({ params, searchParams }: PageProps) => {
   const user = await getCurrentUser();
-  const interviewId = params.interviewId;
+  const { interviewId } = await params;
+  const { autostart } = await searchParams;
   let interview = null;
 
   if (interviewId) {
@@ -33,19 +34,10 @@ const Page = async ({ params }: PageProps) => {
       </div>
     );
   }
-  const displayRole = getDisplayInterviewRole(
-    interview.role,
-    interview.techstack,
-    interview.id,
-  );
-
   return (
-    <div className="max-w-3xl mx-auto p-6">
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <h1 className="text-2xl font-bold">{displayRole} Interview</h1>
-        <Button asChild className="btn-secondary">
-          <Link href="/">Back to Dashboard</Link>
-        </Button>
+    <>
+      <div className="flex items-center justify-between gap-4">
+        <h3>Interview generation</h3>
       </div>
 
       <Agent
@@ -55,8 +47,9 @@ const Page = async ({ params }: PageProps) => {
         interviewId={interview.id}
         type="interview"
         questions={interview.questions}
+        autoStart={autostart === "1"}
       />
-    </div>
+    </>
   );
 };
 

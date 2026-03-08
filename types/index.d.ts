@@ -68,6 +68,7 @@ interface AgentProps {
   feedbackId?: string;
   type: "generate" | "interview";
   questions?: string[];
+  autoStart?: boolean;
 }
 
 interface RouteParams {
@@ -102,6 +103,19 @@ interface QuestionBankItem {
   techstack: string[];
   interviewId: string;
   createdAt: string;
+}
+
+interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  name: string;
+  email?: string;
+  interviews: number;
+  feedbackCount: number;
+  averageScore: number;
+  improvementScore: number;
+  consistencyScore: number;
+  competitiveScore: number;
 }
 
 interface SignInParams {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { getCurrentUser } from "@/lib/actions/auth.action";
@@ -7,7 +8,12 @@ import { getDisplayInterviewRole } from "@/lib/utils";
 
 const QuestionsPage = async () => {
   const user = await getCurrentUser();
-  const questions = user?.id ? await getQuestionBankByUserId(user.id) : [];
+  if (!user?.id) {
+    redirect("/sign-in");
+  }
+
+  const questions = (await getQuestionBankByUserId(user.id)) ?? [];
+  const hasQuestions = questions.length > 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -42,11 +48,7 @@ const QuestionsPage = async () => {
         <div className="card p-6">
           <h3 className="text-xl">All Questions</h3>
 
-          {questions.length === 0 ? (
-            <p className="mt-4">
-              No saved questions yet. Start an interview to generate your first set.
-            </p>
-          ) : (
+          {hasQuestions ? (
             <div className="mt-4 space-y-3">
               {questions.map((item, index) => (
                 <div
@@ -77,6 +79,10 @@ const QuestionsPage = async () => {
                 </div>
               ))}
             </div>
+          ) : (
+            <p className="mt-4">
+              No saved questions yet. Start an interview to generate your first set.
+            </p>
           )}
         </div>
       </section>

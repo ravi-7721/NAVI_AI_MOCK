@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { cn, getFallbackInterviewRoleBySeed } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
   createFeedback,
   createInterviewSession,
@@ -173,17 +173,42 @@ const inferInterviewMeta = (selectedQuestions: string[]) => {
     text,
   );
   const hasBackend = /api|backend|database|sql|node|server|microservice/.test(text);
+  const hasDevops = /devops|docker|kubernetes|ci\/cd|aws|azure|gcp|terraform/.test(
+    text,
+  );
+  const hasData = /data|sql|analytics|etl|warehouse|tableau|power bi/.test(text);
+  const hasMl = /machine learning|deep learning|llm|ai model|prompt/.test(text);
+  const hasQa = /qa|testing|automation|selenium|cypress|jest/.test(text);
+  const hasMobile = /android|ios|flutter|react native|kotlin|swift/.test(text);
+  const hasMarketing =
+    /marketing|seo|campaign|brand|content strategy|social media|growth/.test(text);
 
-  let role = getFallbackInterviewRoleBySeed(selectedQuestions.join("|"));
+  let role = "Software Engineer";
   if (hasJava && (hasFrontend || hasBackend)) role = "Full Stack Java Developer";
   else if (hasPython && (hasFrontend || hasBackend))
     role = "Full Stack Python Developer";
   else if (hasDotnet && (hasFrontend || hasBackend))
     role = "Full Stack .NET Developer";
-  else if (hasJava) role = "Java Developer";
-  else if (hasPython) role = "Python Developer";
-  else if (hasDotnet) role = ".NET Developer";
   else if (hasFrontend && hasBackend) role = "Full Stack Developer";
+  else if (hasFrontend) role = "Frontend Developer";
+  else if (hasBackend) role = "Backend Developer";
+  else if (hasMl) role = "ML Engineer";
+  else if (hasData) role = "Data Engineer";
+  else if (hasDevops) role = "DevOps Engineer";
+  else if (hasQa) role = "QA Automation Engineer";
+  else if (hasMobile) role = "Mobile App Developer";
+  else if (hasMarketing) role = "Digital Marketing Specialist";
+  else {
+    const genericRoles = [
+      "Software Engineer",
+      "Frontend Developer",
+      "Backend Developer",
+      "Full Stack Developer",
+      "DevOps Engineer",
+      "Data Engineer",
+    ];
+    role = genericRoles[Math.floor(Math.random() * genericRoles.length)];
+  }
 
   const techstack: string[] = [];
   if (hasJava) techstack.push("Java", "Spring Boot");
@@ -191,6 +216,11 @@ const inferInterviewMeta = (selectedQuestions: string[]) => {
   if (hasDotnet) techstack.push("C#", ".NET");
   if (hasFrontend) techstack.push("React", "TypeScript");
   if (hasBackend) techstack.push("Node.js", "SQL");
+  if (hasDevops) techstack.push("Docker", "Kubernetes");
+  if (hasMl) techstack.push("Python", "LLM");
+  if (hasData) techstack.push("SQL", "Analytics");
+  if (hasQa) techstack.push("Testing", "Automation");
+  if (hasMarketing) techstack.push("SEO", "Analytics");
   if (techstack.length === 0) techstack.push("Communication", "Problem Solving");
 
   return {
@@ -212,6 +242,29 @@ const getRecognitionCtor = (): BrowserSpeechRecognitionCtor | null => {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 };
 
+const normalizeSpeech = (value: string) =>
+  value.toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+
+const isValidInterviewAnswer = (answer: string, question: string) => {
+  const normalizedAnswer = normalizeSpeech(answer);
+  const normalizedQuestion = normalizeSpeech(question);
+
+  // Avoid auto-submitting extremely short/noisy captures.
+  if (normalizedAnswer.length < 6) return false;
+
+  // Prevent assistant prompt echo from being treated as candidate answer.
+  if (normalizedQuestion && normalizedAnswer === normalizedQuestion) return false;
+  if (
+    normalizedQuestion &&
+    (normalizedAnswer.includes(normalizedQuestion) ||
+      normalizedQuestion.includes(normalizedAnswer))
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
 const Agent = ({
   userName,
   profileImage: _profileImage,
@@ -220,6 +273,7 @@ const Agent = ({
   feedbackId,
   type: _type,
   questions,
+  autoStart = false,
 }: AgentProps) => {
   void [_profileImage, _type];
 
@@ -252,6 +306,8 @@ const Agent = ({
   const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualStopRef = React.useRef(false);
   const shouldAutoSubmitOnEndRef = React.useRef(false);
+  const autoStartTriggeredRef = React.useRef(false);
+  const preSpokenQuestionIndexRef = React.useRef<number | null>(null);
   const isSpeaking = callStatus === CallStatus.ACTIVE;
 
   React.useEffect(() => {
@@ -342,6 +398,22 @@ const Agent = ({
 
       if (shouldAutoSubmitOnEndRef.current && finalSpoken) {
         shouldAutoSubmitOnEndRef.current = false;
+
+        // In question-answer mode, only submit if this looks like a real answer.
+        if (
+          currentQuestionIndex >= 0 &&
+          !isValidInterviewAnswer(finalSpoken, currentPrompt)
+        ) {
+          spokenTextRef.current = "";
+          setCurrentAnswer("");
+          if (callStatus === CallStatus.ACTIVE && !isGeneratingReport && !isInterviewCompleted) {
+            setTimeout(() => {
+              startListeningRef.current();
+            }, 150);
+          }
+          return;
+        }
+
         autoSubmitFromSpeechRef.current(finalSpoken);
         return;
       }
@@ -359,6 +431,8 @@ const Agent = ({
   }, [
     callStatus,
     clearSilenceTimer,
+    currentPrompt,
+    currentQuestionIndex,
     isGeneratingReport,
     isInterviewCompleted,
     stopListening,
@@ -549,6 +623,11 @@ const Agent = ({
     if (currentQuestionIndex < 0 || currentQuestionIndex >= sessionQuestions.length)
       return;
 
+    if (preSpokenQuestionIndexRef.current === currentQuestionIndex) {
+      preSpokenQuestionIndexRef.current = null;
+      return;
+    }
+
     const question = sessionQuestions[currentQuestionIndex];
     setCurrentPrompt(question);
     setCurrentAnswer("");
@@ -584,6 +663,30 @@ const Agent = ({
   }, [callStatus, clearSilenceTimer, interviewId, stopListening]);
 
   const startInterview = () => {
+    if (safeQuestions.length > 0) {
+      setSessionQuestions(safeQuestions);
+      setQaLog(safeQuestions.map((question) => ({ question, answer: "" })));
+      setCurrentPrompt("");
+      setCurrentAnswer("");
+      setCurrentQuestionIndex(0);
+      setCallStatus(CallStatus.CONNECTING);
+      setIsInterviewCompleted(false);
+
+      setTimeout(() => {
+        setCallStatus(CallStatus.ACTIVE);
+
+        const firstQuestion = safeQuestions[0];
+        if (firstQuestion) {
+          preSpokenQuestionIndexRef.current = 0;
+          setCurrentPrompt(firstQuestion);
+          setCurrentAnswer("");
+          spokenTextRef.current = "";
+          speakText(firstQuestion, startListening);
+        }
+      }, 700);
+      return;
+    }
+
     const countPrompt = "How many questions do you want for this interview?";
 
     setSessionQuestions([]);
@@ -616,6 +719,16 @@ const Agent = ({
       setCallStatus(CallStatus.INACTIVE);
     }
   };
+
+  React.useEffect(() => {
+    if (!autoStart) return;
+    if (autoStartTriggeredRef.current) return;
+    if (callStatus !== CallStatus.INACTIVE) return;
+    if (safeQuestions.length === 0) return;
+
+    autoStartTriggeredRef.current = true;
+    startInterview();
+  }, [autoStart, callStatus, safeQuestions.length]);
 
   return (
     <>

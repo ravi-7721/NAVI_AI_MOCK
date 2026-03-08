@@ -55,17 +55,6 @@ const Page = async () => {
             <Link href="/interview">Start an Interview</Link>
           </Button>
 
-          <div className="flex flex-wrap gap-2">
-            <Button asChild className="btn-secondary">
-              <Link href="/dashboard">Dashboard</Link>
-            </Button>
-            <Button asChild className="btn-secondary">
-              <Link href="/questions">Question Bank</Link>
-            </Button>
-            <Button asChild className="btn-secondary">
-              <Link href="/settings">Settings</Link>
-            </Button>
-          </div>
         </div>
 
         <Image

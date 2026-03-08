@@ -75,9 +75,6 @@ const SettingsPage = async ({ searchParams }: SettingsPageProps) => {
             Set your default role, level, and tech stack so future interview
             sessions are aligned with your preparation goals.
           </p>
-          <Button asChild className="btn-secondary w-fit">
-            <Link href="/dashboard">Back to Dashboard</Link>
-          </Button>
         </div>
       </section>
 
