@@ -5,6 +5,13 @@ import { cookies } from "next/headers";
 
 // Firebase session token lifetime (cookie itself is session-only).
 const SESSION_DURATION_MS = 60 * 60 * 12 * 1000; // 12 hours
+const DEFAULT_USER_SETTINGS: UserSettings = {
+  preferredRole: "Software Engineer",
+  preferredLevel: "Mid",
+  preferredType: "Mixed",
+  preferredTechStack: ["JavaScript", "React", "Node.js"],
+  interviewGoal: "Improve confidence and answer clarity.",
+};
 
 // Set session cookie
 export async function setSessionCookie(idToken: string) {
@@ -132,4 +139,75 @@ export async function getCurrentUser(): Promise<User | null> {
 export async function isAuthenticated() {
   const user = await getCurrentUser();
   return !!user;
+}
+
+export async function getUserSettings(userId: string): Promise<UserSettings> {
+  try {
+    const userRecord = await db.collection("users").doc(userId).get();
+    const rawSettings = userRecord.data()?.settings;
+
+    if (!rawSettings) return DEFAULT_USER_SETTINGS;
+
+    return {
+      preferredRole:
+        typeof rawSettings.preferredRole === "string" &&
+        rawSettings.preferredRole.trim()
+          ? rawSettings.preferredRole.trim()
+          : DEFAULT_USER_SETTINGS.preferredRole,
+      preferredLevel:
+        rawSettings.preferredLevel === "Junior" ||
+        rawSettings.preferredLevel === "Mid" ||
+        rawSettings.preferredLevel === "Senior"
+          ? rawSettings.preferredLevel
+          : DEFAULT_USER_SETTINGS.preferredLevel,
+      preferredType:
+        rawSettings.preferredType === "Technical" ||
+        rawSettings.preferredType === "Behavioral" ||
+        rawSettings.preferredType === "Mixed"
+          ? rawSettings.preferredType
+          : DEFAULT_USER_SETTINGS.preferredType,
+      preferredTechStack: Array.isArray(rawSettings.preferredTechStack)
+        ? rawSettings.preferredTechStack
+            .map((item: unknown) => String(item).trim())
+            .filter(Boolean)
+            .slice(0, 10)
+        : DEFAULT_USER_SETTINGS.preferredTechStack,
+      interviewGoal:
+        typeof rawSettings.interviewGoal === "string" &&
+        rawSettings.interviewGoal.trim()
+          ? rawSettings.interviewGoal.trim()
+          : DEFAULT_USER_SETTINGS.interviewGoal,
+    };
+  } catch (error) {
+    console.error("Error getting user settings:", error);
+    return DEFAULT_USER_SETTINGS;
+  }
+}
+
+export async function updateUserSettings(
+  userId: string,
+  settings: UserSettings,
+): Promise<boolean> {
+  try {
+    await db.collection("users").doc(userId).set(
+      {
+        settings: {
+          preferredRole: settings.preferredRole.trim() || DEFAULT_USER_SETTINGS.preferredRole,
+          preferredLevel: settings.preferredLevel,
+          preferredType: settings.preferredType,
+          preferredTechStack: settings.preferredTechStack
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .slice(0, 10),
+          interviewGoal: settings.interviewGoal.trim() || DEFAULT_USER_SETTINGS.interviewGoal,
+        },
+      },
+      { merge: true },
+    );
+
+    return true;
+  } catch (error) {
+    console.error("Error updating user settings:", error);
+    return false;
+  }
 }

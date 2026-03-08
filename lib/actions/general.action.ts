@@ -316,3 +316,111 @@ export async function createInterviewSession(params: {
     return { success: false as const };
   }
 }
+
+export async function getDashboardStatsByUserId(
+  userId: string,
+): Promise<DashboardStats> {
+  try {
+    const [interviewsSnapshot, feedbackSnapshot] = await Promise.all([
+      db.collection("interviews").where("userId", "==", userId).get(),
+      db.collection("feedback").where("userId", "==", userId).get(),
+    ]);
+
+    const feedbackDocs = feedbackSnapshot.docs.map((doc) => doc.data() as Feedback);
+    const categoryAggregate = new Map<string, { total: number; count: number }>();
+
+    feedbackDocs.forEach((feedback) => {
+      feedback.categoryScores?.forEach((item) => {
+        const key = item.name?.trim() || "General";
+        const existing = categoryAggregate.get(key) || { total: 0, count: 0 };
+        categoryAggregate.set(key, {
+          total: existing.total + Number(item.score || 0),
+          count: existing.count + 1,
+        });
+      });
+    });
+
+    const categoryAverages = [...categoryAggregate.entries()].map(([name, values]) => ({
+      name,
+      average: values.count > 0 ? values.total / values.count : 0,
+    }));
+
+    const strongestCategory =
+      categoryAverages.length > 0
+        ? categoryAverages.reduce((best, item) =>
+            item.average > best.average ? item : best,
+          ).name
+        : "N/A";
+
+    const weakestCategory =
+      categoryAverages.length > 0
+        ? categoryAverages.reduce((worst, item) =>
+            item.average < worst.average ? item : worst,
+          ).name
+        : "N/A";
+
+    const averageScore =
+      feedbackDocs.length > 0
+        ? Math.round(
+            feedbackDocs.reduce((sum, item) => sum + Number(item.totalScore || 0), 0) /
+              feedbackDocs.length,
+          )
+        : 0;
+
+    return {
+      totalInterviews: interviewsSnapshot.size,
+      totalFeedback: feedbackSnapshot.size,
+      averageScore,
+      strongestCategory,
+      weakestCategory,
+    };
+  } catch (error) {
+    console.error("Error getting dashboard stats:", error);
+    return {
+      totalInterviews: 0,
+      totalFeedback: 0,
+      averageScore: 0,
+      strongestCategory: "N/A",
+      weakestCategory: "N/A",
+    };
+  }
+}
+
+export async function getQuestionBankByUserId(
+  userId: string,
+): Promise<QuestionBankItem[]> {
+  try {
+    const interviews = await getInterviewsByUserId(userId);
+    if (!interviews?.length) return [];
+
+    const seen = new Set<string>();
+    const items: QuestionBankItem[] = [];
+
+    interviews.forEach((interview) => {
+      interview.questions?.forEach((question, idx) => {
+        const normalizedQuestion = (question || "").trim();
+        if (!normalizedQuestion) return;
+
+        const dedupeKey = normalizedQuestion.toLowerCase();
+        if (seen.has(dedupeKey)) return;
+        seen.add(dedupeKey);
+
+        items.push({
+          id: `${interview.id}-${idx}`,
+          question: normalizedQuestion,
+          role: interview.role,
+          level: interview.level,
+          type: interview.type,
+          techstack: interview.techstack || [],
+          interviewId: interview.id,
+          createdAt: interview.createdAt,
+        });
+      });
+    });
+
+    return items;
+  } catch (error) {
+    console.error("Error getting question bank:", error);
+    return [];
+  }
+}

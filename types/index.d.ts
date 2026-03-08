@@ -39,6 +39,15 @@ interface User {
   email: string;
   id: string;
   profileURL?: string;
+  settings?: UserSettings;
+}
+
+interface UserSettings {
+  preferredRole: string;
+  preferredLevel: "Junior" | "Mid" | "Senior";
+  preferredType: "Technical" | "Behavioral" | "Mixed";
+  preferredTechStack: string[];
+  interviewGoal: string;
 }
 
 interface InterviewCardProps {
@@ -74,6 +83,25 @@ interface GetFeedbackByInterviewIdParams {
 interface GetLatestInterviewsParams {
   userId: string;
   limit?: number;
+}
+
+interface DashboardStats {
+  totalInterviews: number;
+  totalFeedback: number;
+  averageScore: number;
+  strongestCategory: string;
+  weakestCategory: string;
+}
+
+interface QuestionBankItem {
+  id: string;
+  question: string;
+  role: string;
+  level: string;
+  type: string;
+  techstack: string[];
+  interviewId: string;
+  createdAt: string;
 }
 
 interface SignInParams {

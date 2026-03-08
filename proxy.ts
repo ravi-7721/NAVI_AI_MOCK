@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 const AUTH_ROUTES = new Set(["/sign-in", "/sign-up"]);
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = Boolean(request.cookies.get("session")?.value);
 

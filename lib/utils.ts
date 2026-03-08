@@ -57,13 +57,13 @@ const hashString = (value: string) => {
   return Math.abs(hash);
 };
 
-const FALLBACK_INTERVIEW_ROLES = [
+const FALLBACK_INTERVIEW_ROLES: string[] = [
   "Software Engineer",
   "Marketing Manager",
   "Accountant",
   "HR Specialist",
   "Sales Representative",
-] as const;
+];
 
 export const getInterviewCoverBySeed = (seed?: string) => {
   if (!seed) return getRandomInterviewCover();
@@ -72,7 +72,7 @@ export const getInterviewCoverBySeed = (seed?: string) => {
   return `/covers${interviewCovers[idx]}`;
 };
 
-export const getFallbackInterviewRoleBySeed = (seed?: string) => {
+export const getFallbackInterviewRoleBySeed = (seed?: string): string => {
   if (!seed) return FALLBACK_INTERVIEW_ROLES[0];
 
   const idx = hashString(seed) % FALLBACK_INTERVIEW_ROLES.length;

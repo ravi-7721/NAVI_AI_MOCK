@@ -158,7 +158,7 @@ const extractCountFromWords = (text: string) => {
 const extractQuestionCount = (text: string, max: number) => {
   const match = text.match(/\d+/);
   const parsed = match ? Number(match[0]) : extractCountFromWords(text);
-  if (!Number.isFinite(parsed)) return null;
+  if (parsed === null || !Number.isFinite(parsed)) return null;
 
   return Math.min(Math.max(parsed, 1), max);
 };
