@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/actions/auth.action";
 import { getInterviewById } from "@/lib/actions/general.action";
 import Agent from "@/components/Agent";
+import { getDisplayInterviewRole } from "@/lib/utils";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
@@ -32,11 +33,16 @@ const Page = async ({ params }: PageProps) => {
       </div>
     );
   }
+  const displayRole = getDisplayInterviewRole(
+    interview.role,
+    interview.techstack,
+    interview.id,
+  );
 
   return (
     <div className="max-w-3xl mx-auto p-6">
       <div className="flex items-center justify-between gap-4 mb-4">
-        <h1 className="text-2xl font-bold">{interview.role} Interview</h1>
+        <h1 className="text-2xl font-bold">{displayRole} Interview</h1>
         <Button asChild className="btn-secondary">
           <Link href="/">Back to Dashboard</Link>
         </Button>

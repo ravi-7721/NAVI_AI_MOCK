@@ -4,6 +4,7 @@ import { ReactNode } from "react";
 import { redirect } from "next/navigation";
 
 import { isAuthenticated } from "@/lib/actions/auth.action";
+import SessionLogoutOnUnload from "@/components/SessionLogoutOnUnload";
 
 const Layout = async ({ children }: { children: ReactNode }) => {
   const isUserAuthenticated = await isAuthenticated();
@@ -11,6 +12,8 @@ const Layout = async ({ children }: { children: ReactNode }) => {
 
   return (
     <div className="root-layout">
+      <SessionLogoutOnUnload />
+
       <nav>
         <Link href="/" className="flex items-center gap-2">
           <Image src="/logo.svg" alt="MockMate Logo" width={38} height={32} />

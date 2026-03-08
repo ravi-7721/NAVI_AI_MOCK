@@ -3,8 +3,8 @@
 import { auth, db } from "@/firebase/admin";
 import { cookies } from "next/headers";
 
-// Session duration (1 week)
-const SESSION_DURATION = 60 * 60 * 24 * 7;
+// Firebase session token lifetime (cookie itself is session-only).
+const SESSION_DURATION_MS = 60 * 60 * 12 * 1000; // 12 hours
 
 // Set session cookie
 export async function setSessionCookie(idToken: string) {
@@ -12,12 +12,11 @@ export async function setSessionCookie(idToken: string) {
 
   // Create session cookie
   const sessionCookie = await auth.createSessionCookie(idToken, {
-    expiresIn: SESSION_DURATION * 1000, // milliseconds
+    expiresIn: SESSION_DURATION_MS,
   });
 
-  // Set cookie in the browser
+  // Set session cookie (no maxAge/expires) so it is cleared when browser closes.
   cookieStore.set("session", sessionCookie, {
-    maxAge: SESSION_DURATION,
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     path: "/",

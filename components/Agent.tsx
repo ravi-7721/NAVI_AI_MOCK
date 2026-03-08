@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { cn } from "@/lib/utils";
+import { cn, getFallbackInterviewRoleBySeed } from "@/lib/utils";
 import {
   createFeedback,
   createInterviewSession,
@@ -161,6 +161,44 @@ const extractQuestionCount = (text: string, max: number) => {
   if (!Number.isFinite(parsed)) return null;
 
   return Math.min(Math.max(parsed, 1), max);
+};
+
+const inferInterviewMeta = (selectedQuestions: string[]) => {
+  const text = selectedQuestions.join(" ").toLowerCase();
+
+  const hasJava = /\bjava\b|spring|hibernate/.test(text);
+  const hasPython = /\bpython\b|django|flask|fastapi/.test(text);
+  const hasDotnet = /\.net|c#|asp\.net/.test(text);
+  const hasFrontend = /react|next\.js|frontend|ui|css|javascript|typescript/.test(
+    text,
+  );
+  const hasBackend = /api|backend|database|sql|node|server|microservice/.test(text);
+
+  let role = getFallbackInterviewRoleBySeed(selectedQuestions.join("|"));
+  if (hasJava && (hasFrontend || hasBackend)) role = "Full Stack Java Developer";
+  else if (hasPython && (hasFrontend || hasBackend))
+    role = "Full Stack Python Developer";
+  else if (hasDotnet && (hasFrontend || hasBackend))
+    role = "Full Stack .NET Developer";
+  else if (hasJava) role = "Java Developer";
+  else if (hasPython) role = "Python Developer";
+  else if (hasDotnet) role = ".NET Developer";
+  else if (hasFrontend && hasBackend) role = "Full Stack Developer";
+
+  const techstack: string[] = [];
+  if (hasJava) techstack.push("Java", "Spring Boot");
+  if (hasPython) techstack.push("Python", "Django");
+  if (hasDotnet) techstack.push("C#", ".NET");
+  if (hasFrontend) techstack.push("React", "TypeScript");
+  if (hasBackend) techstack.push("Node.js", "SQL");
+  if (techstack.length === 0) techstack.push("Communication", "Problem Solving");
+
+  return {
+    role,
+    type: hasFrontend || hasBackend ? "Mixed" : "Behavioral",
+    level: "Mid",
+    techstack: [...new Set(techstack)],
+  };
 };
 
 const getRecognitionCtor = (): BrowserSpeechRecognitionCtor | null => {
@@ -421,7 +459,8 @@ const Agent = ({
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
 
-    const answerText = (overrideAnswer ?? currentAnswer).trim();
+    const answerText =
+      (typeof overrideAnswer === "string" ? overrideAnswer : currentAnswer).trim();
 
     try {
     if (currentQuestionIndex === -1) {
@@ -440,13 +479,14 @@ const Agent = ({
 
       const selected = orderedBank.slice(0, count);
       if (!interviewId && userId) {
+        const interviewMeta = inferInterviewMeta(selected);
         const created = await createInterviewSession({
           userId,
           questions: selected,
-          role: "General Interview",
-          type: "Mixed",
-          level: "Mid",
-          techstack: ["Communication", "Behavioral", "General Aptitude"],
+          role: interviewMeta.role,
+          type: interviewMeta.type,
+          level: interviewMeta.level,
+          techstack: interviewMeta.techstack,
         });
 
         if (created.success) {
@@ -638,7 +678,9 @@ const Agent = ({
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={handleSubmitAnswer}
+                    onClick={() => {
+                      void handleSubmitAnswer();
+                    }}
                     className="btn-primary"
                     disabled={isGeneratingReport}
                   >

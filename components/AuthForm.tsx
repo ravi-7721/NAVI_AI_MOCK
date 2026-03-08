@@ -10,7 +10,9 @@ import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import {
+  browserSessionPersistence,
   createUserWithEmailAndPassword,
+  setPersistence,
   signInWithEmailAndPassword,
 } from "firebase/auth";
 
@@ -69,6 +71,7 @@ const AuthForm = ({ type }: { type: FormType }) => {
       } else {
         const { email, password } = data;
 
+        await setPersistence(auth, browserSessionPersistence);
         const userCredential = await signInWithEmailAndPassword(
           auth,
           email,
@@ -93,7 +96,7 @@ const AuthForm = ({ type }: { type: FormType }) => {
 
         toast.success("Signed in successfully.");
 
-        // navigate to home/dashboard; use replace so browser back doesn't return to sign-in
+        // navigate to dashboard/homepage after sign-in
         router.push("/");
         // refresh server components after navigation so authenticated layout is updated
         router.refresh();

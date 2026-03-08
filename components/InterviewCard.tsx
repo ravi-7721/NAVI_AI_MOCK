@@ -6,7 +6,7 @@ import { Button } from "./ui/button";
 import DisplayTechIcons from "./DisplayTechIcons";
 import StarRating from "./StarRating";
 
-import { cn, getInterviewCoverBySeed } from "@/lib/utils";
+import { cn, getDisplayInterviewRole, getInterviewCoverBySeed } from "@/lib/utils";
 import { getFeedbackByInterviewId } from "@/lib/actions/general.action";
 
 const InterviewCard = async ({
@@ -38,9 +38,15 @@ const InterviewCard = async ({
   const formattedDate = dayjs(
     feedback?.createdAt || createdAt || Date.now(),
   ).format("MMM D, YYYY");
+  const displayRole = getDisplayInterviewRole(
+    role,
+    techstack,
+    `${interviewId || role}-${createdAt || ""}`,
+  );
 
   const stableCover =
-    coverImage || getInterviewCoverBySeed(`${interviewId || role}-${createdAt || ""}`);
+    coverImage ||
+    getInterviewCoverBySeed(`${interviewId || displayRole}-${createdAt || ""}`);
 
   return (
     <div className="card-border w-[360px] max-sm:w-full min-h-96">
@@ -66,7 +72,7 @@ const InterviewCard = async ({
           />
 
           {/* Interview Role */}
-          <h3 className="mt-5 capitalize">{role} Interview</h3>
+          <h3 className="mt-5 capitalize">{displayRole} Interview</h3>
 
           {/* Date & Score */}
           <div className="flex flex-row gap-5 mt-3">
