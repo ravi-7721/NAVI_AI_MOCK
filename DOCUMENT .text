@@ -1,0 +1,5 @@
+
+
+to install vercel ai= npm install ai @ai-sdk/google
+
+to install vapi ai  =npm install @vapi-ai/web
