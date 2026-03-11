@@ -1,7 +1,6 @@
 // dashboard is a server component so we can fetch current user + their interviews
 import Link from "next/link";
 import Image from "next/image";
-import { redirect } from "next/navigation";
 import {
   Facebook,
   Github,
@@ -10,22 +9,15 @@ import {
   Twitter,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import InterviewCard from "@/components/InterviewCard";
-import { getCurrentUser, signOut } from "@/lib/actions/auth.action";
+import { Button } from "@/components/ui/button";
+import { getCurrentUser } from "@/lib/actions/auth.action";
 import {
   ensureDefaultInterviewsForUser,
   getInterviewsByUserId,
 } from "@/lib/actions/general.action";
 
 const Page = async () => {
-  const logout = async () => {
-    "use server";
-
-    await signOut();
-    redirect("/sign-in");
-  };
-
   const user = await getCurrentUser();
   let interviews: Interview[] | null = null;
 
@@ -36,14 +28,6 @@ const Page = async () => {
 
   return (
     <>
-      <section className="flex justify-end">
-        <form action={logout}>
-          <Button type="submit" className="btn">
-            Logout
-          </Button>
-        </form>
-      </section>
-
       <section className="card-cta">
         <div className="flex flex-col gap-6 max-w-lg">
           <h2>Get Interview-Ready with AI-Powered Practice & Feedback</h2>
@@ -55,16 +39,7 @@ const Page = async () => {
             <Button asChild className="btn-primary max-sm:w-full">
               <Link href="/interview">Start an Interview</Link>
             </Button>
-            <Button asChild className="btn-secondary max-sm:w-full">
-              <Link href="/api/desktop-download">Download Windows App (.exe)</Link>
-            </Button>
           </div>
-
-          <p className="text-sm text-light-400">
-            Build the installer with <code>npm run dist:win</code>, then use this
-            button to download the generated `.exe`.
-          </p>
-
         </div>
 
         <Image

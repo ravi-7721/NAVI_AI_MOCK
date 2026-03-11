@@ -4,12 +4,14 @@ import React from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import type { CreateAssistantDTO } from "@vapi-ai/web/dist/api";
 
 import { cn } from "@/lib/utils";
 import {
   createFeedback,
   createInterviewSession,
 } from "@/lib/actions/general.action";
+import { vapi } from "@/lib/vapi.sdk";
 
 enum CallStatus {
   INACTIVE = "INACTIVE",
@@ -52,6 +54,34 @@ type SpeechRecognitionEvent = {
 
 const INTRO_QUESTION = "Tell me about yourself and your background.";
 const SILENCE_TIMEOUT_MS = 1700;
+const VAPI_ENABLED = Boolean(process.env.NEXT_PUBLIC_VAPI_WEB_TOKEN);
+
+const VOICE_AGENT: CreateAssistantDTO = {
+  name: "Interviewer",
+  firstMessage: "",
+  firstMessageMode: "assistant-waits-for-user",
+  transcriber: {
+    provider: "deepgram",
+    model: "nova-2",
+    language: "en",
+  },
+  voice: {
+    provider: "vapi",
+    voiceId: "Neha",
+    speed: 1,
+  },
+  model: {
+    provider: "openai",
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a silent recruiter voice assistant inside a controlled interview UI. Never ask your own questions, never continue the interview on your own, and never answer unless the client explicitly sends a say command. Stay silent while the candidate is speaking.",
+      },
+    ],
+  },
+};
 
 const DEFAULT_QUESTION_BANK = [
   INTRO_QUESTION,
@@ -294,6 +324,7 @@ const Agent = ({
   const [speechSupported, setSpeechSupported] = React.useState(true);
   const [isGeneratingReport, setIsGeneratingReport] = React.useState(false);
   const [isInterviewCompleted, setIsInterviewCompleted] = React.useState(false);
+  const [assistantSpeaking, setAssistantSpeaking] = React.useState(false);
   const [resolvedInterviewId, setResolvedInterviewId] = React.useState<
     string | undefined
   >(interviewId);
@@ -308,11 +339,32 @@ const Agent = ({
   const shouldAutoSubmitOnEndRef = React.useRef(false);
   const autoStartTriggeredRef = React.useRef(false);
   const preSpokenQuestionIndexRef = React.useRef<number | null>(null);
-  const isSpeaking = callStatus === CallStatus.ACTIVE;
+  const callStatusRef = React.useRef<CallStatus>(CallStatus.INACTIVE);
+  const currentQuestionIndexRef = React.useRef(-1);
+  const currentPromptRef = React.useRef("");
+  const pendingSpeechRef = React.useRef<string | null>(null);
+  const lastFinalTranscriptRef = React.useRef<{
+    questionIndex: number;
+    transcript: string;
+  } | null>(null);
+  const lastSpokenQuestionIndexRef = React.useRef<number | null>(null);
+  const isSpeaking = assistantSpeaking;
 
   React.useEffect(() => {
-    setSpeechSupported(!!getRecognitionCtor());
+    setSpeechSupported(VAPI_ENABLED || !!getRecognitionCtor());
   }, []);
+
+  React.useEffect(() => {
+    callStatusRef.current = callStatus;
+  }, [callStatus]);
+
+  React.useEffect(() => {
+    currentQuestionIndexRef.current = currentQuestionIndex;
+  }, [currentQuestionIndex]);
+
+  React.useEffect(() => {
+    currentPromptRef.current = currentPrompt;
+  }, [currentPrompt]);
 
   const clearSilenceTimer = React.useCallback(() => {
     if (silenceTimerRef.current) {
@@ -326,6 +378,11 @@ const Agent = ({
     shouldAutoSubmitOnEndRef.current = false;
     clearSilenceTimer();
 
+    if (VAPI_ENABLED) {
+      setIsListening(false);
+      return;
+    }
+
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
@@ -334,6 +391,24 @@ const Agent = ({
   }, [clearSilenceTimer]);
 
   const speakText = React.useCallback((text: string, onDone: () => void) => {
+    if (VAPI_ENABLED) {
+      if (callStatusRef.current !== CallStatus.ACTIVE) {
+        pendingSpeechRef.current = text;
+        window.setTimeout(onDone, 50);
+        return;
+      }
+
+      try {
+        pendingSpeechRef.current = null;
+        vapi.say(text);
+      } catch (error) {
+        console.error(error);
+      }
+
+      window.setTimeout(onDone, 50);
+      return;
+    }
+
     if (typeof window === "undefined" || !window.speechSynthesis) {
       onDone();
       return;
@@ -348,6 +423,11 @@ const Agent = ({
   }, []);
 
   const startListening = React.useCallback(() => {
+    if (VAPI_ENABLED) {
+      setIsListening(true);
+      return;
+    }
+
     const Ctor = getRecognitionCtor();
     if (!Ctor) {
       setSpeechSupported(false);
@@ -401,8 +481,8 @@ const Agent = ({
 
         // In question-answer mode, only submit if this looks like a real answer.
         if (
-          currentQuestionIndex >= 0 &&
-          !isValidInterviewAnswer(finalSpoken, currentPrompt)
+          currentQuestionIndexRef.current >= 0 &&
+          !isValidInterviewAnswer(finalSpoken, currentPromptRef.current)
         ) {
           spokenTextRef.current = "";
           setCurrentAnswer("");
@@ -439,8 +519,132 @@ const Agent = ({
   ]);
 
   React.useEffect(() => {
+    if (!VAPI_ENABLED) return;
+
+    const handleCallStart = () => {
+      setCallStatus(CallStatus.ACTIVE);
+      setIsListening(true);
+
+      if (pendingSpeechRef.current) {
+        const queuedPrompt = pendingSpeechRef.current;
+        pendingSpeechRef.current = null;
+        vapi.say(queuedPrompt);
+      }
+    };
+
+    const handleCallEnd = () => {
+      setAssistantSpeaking(false);
+      setIsListening(false);
+    };
+
+    const handleSpeechStart = () => {
+      setAssistantSpeaking(true);
+    };
+
+    const handleSpeechEnd = () => {
+      setAssistantSpeaking(false);
+    };
+
+    const handleMessage = (message: Message | { type?: string; role?: string; transcript?: string; transcriptType?: string }) => {
+      if (!message || message.type !== "transcript" || !message.transcript) return;
+
+      if (message.role === "assistant") {
+        setCurrentPrompt(message.transcript);
+        return;
+      }
+
+      if (message.role !== "user") return;
+
+      setCurrentAnswer(message.transcript);
+
+      if (message.transcriptType === "final") {
+        const finalTranscript = message.transcript.trim();
+        const lastFinalTranscript = lastFinalTranscriptRef.current;
+
+        if (
+          lastFinalTranscript &&
+          lastFinalTranscript.questionIndex === currentQuestionIndexRef.current &&
+          lastFinalTranscript.transcript === finalTranscript
+        ) {
+          return;
+        }
+
+        lastFinalTranscriptRef.current = {
+          questionIndex: currentQuestionIndexRef.current,
+          transcript: finalTranscript,
+        };
+
+        autoSubmitFromSpeechRef.current(finalTranscript);
+      }
+    };
+
+    const handleError = (error: unknown) => {
+      console.error(error);
+      const errorMessage =
+        typeof error === "object" && error !== null && "error" in error
+          ? String((error as { error?: { message?: string } }).error?.message || "Unknown Vapi error")
+          : String(error || "Unknown Vapi error");
+
+      toast.error(`Voice agent failed: ${errorMessage}`);
+      setCallStatus(CallStatus.INACTIVE);
+      setIsListening(false);
+      setAssistantSpeaking(false);
+    };
+
+    const handleCallStartFailed = (event: {
+      error?: string;
+      stage?: string;
+    }) => {
+      const stage = event?.stage ? `${event.stage}: ` : "";
+      toast.error(`Voice start failed. ${stage}${event?.error || "Unknown error"}`);
+      setCallStatus(CallStatus.INACTIVE);
+      setIsListening(false);
+      setAssistantSpeaking(false);
+    };
+
+    vapi.on("call-start", handleCallStart);
+    vapi.on("call-end", handleCallEnd);
+    vapi.on("speech-start", handleSpeechStart);
+    vapi.on("speech-end", handleSpeechEnd);
+    vapi.on("message", handleMessage);
+    vapi.on("error", handleError);
+    vapi.on("call-start-failed", handleCallStartFailed);
+
+    return () => {
+      vapi.removeListener("call-start", handleCallStart);
+      vapi.removeListener("call-end", handleCallEnd);
+      vapi.removeListener("speech-start", handleSpeechStart);
+      vapi.removeListener("speech-end", handleSpeechEnd);
+      vapi.removeListener("message", handleMessage);
+      vapi.removeListener("error", handleError);
+      vapi.removeListener("call-start-failed", handleCallStartFailed);
+      void vapi.stop();
+    };
+  }, []);
+
+  React.useEffect(() => {
     startListeningRef.current = startListening;
   }, [startListening]);
+
+  const startVoiceAgentCall = React.useCallback(async () => {
+    if (!VAPI_ENABLED) return true;
+
+    try {
+      const webCall = await vapi.start(VOICE_AGENT);
+      if (!webCall) {
+        toast.error("Could not start the voice agent.");
+        setCallStatus(CallStatus.INACTIVE);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error(error);
+      toast.error("Could not start the voice agent.");
+      setCallStatus(CallStatus.INACTIVE);
+      return false;
+    }
+  }, []);
 
   const commitAnswer = React.useCallback(
     (answer: string, index: number, baseLog?: { question: string; answer: string }[]) => {
@@ -514,7 +718,9 @@ const Agent = ({
 
   const endInterviewAndGenerateReport = React.useCallback(async () => {
     stopListening();
-    if (typeof window !== "undefined" && window.speechSynthesis) {
+    if (VAPI_ENABLED) {
+      await vapi.stop();
+    } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
 
@@ -625,10 +831,16 @@ const Agent = ({
 
     if (preSpokenQuestionIndexRef.current === currentQuestionIndex) {
       preSpokenQuestionIndexRef.current = null;
+      lastSpokenQuestionIndexRef.current = currentQuestionIndex;
+      return;
+    }
+
+    if (lastSpokenQuestionIndexRef.current === currentQuestionIndex) {
       return;
     }
 
     const question = sessionQuestions[currentQuestionIndex];
+    lastSpokenQuestionIndexRef.current = currentQuestionIndex;
     setCurrentPrompt(question);
     setCurrentAnswer("");
     spokenTextRef.current = "";
@@ -645,7 +857,9 @@ const Agent = ({
     if (callStatus !== CallStatus.INACTIVE) return;
 
     stopListening();
-    if (typeof window !== "undefined" && window.speechSynthesis) {
+    if (VAPI_ENABLED) {
+      void vapi.stop();
+    } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
 
@@ -656,34 +870,37 @@ const Agent = ({
     setCurrentQuestionIndex(-1);
     setIsInterviewCompleted(false);
     setResolvedInterviewId(interviewId);
+    pendingSpeechRef.current = null;
+    lastFinalTranscriptRef.current = null;
+    lastSpokenQuestionIndexRef.current = null;
     clearSilenceTimer();
     manualStopRef.current = false;
     shouldAutoSubmitOnEndRef.current = false;
     spokenTextRef.current = "";
   }, [callStatus, clearSilenceTimer, interviewId, stopListening]);
 
-  const startInterview = () => {
+  const startInterview = async () => {
+    setCallStatus(CallStatus.CONNECTING);
+    const voiceAgentReady = await startVoiceAgentCall();
+    if (!voiceAgentReady) return;
+
     if (safeQuestions.length > 0) {
       setSessionQuestions(safeQuestions);
       setQaLog(safeQuestions.map((question) => ({ question, answer: "" })));
       setCurrentPrompt("");
       setCurrentAnswer("");
       setCurrentQuestionIndex(0);
-      setCallStatus(CallStatus.CONNECTING);
       setIsInterviewCompleted(false);
 
-      setTimeout(() => {
-        setCallStatus(CallStatus.ACTIVE);
-
-        const firstQuestion = safeQuestions[0];
-        if (firstQuestion) {
-          preSpokenQuestionIndexRef.current = 0;
-          setCurrentPrompt(firstQuestion);
-          setCurrentAnswer("");
-          spokenTextRef.current = "";
-          speakText(firstQuestion, startListening);
-        }
-      }, 700);
+      const firstQuestion = safeQuestions[0];
+      if (firstQuestion) {
+        preSpokenQuestionIndexRef.current = 0;
+        lastSpokenQuestionIndexRef.current = 0;
+        setCurrentPrompt(firstQuestion);
+        setCurrentAnswer("");
+        spokenTextRef.current = "";
+        speakText(firstQuestion, startListening);
+      }
       return;
     }
 
@@ -694,12 +911,7 @@ const Agent = ({
     setCurrentPrompt(countPrompt);
     setCurrentAnswer("");
     setCurrentQuestionIndex(-1);
-    setCallStatus(CallStatus.CONNECTING);
-
-    setTimeout(() => {
-      setCallStatus(CallStatus.ACTIVE);
-      speakText(countPrompt, startListening);
-    }, 700);
+    speakText(countPrompt, startListening);
   };
 
   const handleCallClick = async () => {

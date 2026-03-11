@@ -4,6 +4,7 @@ import { z } from "zod";
 import Link from "next/link";
 import Image from "next/image";
 import { toast } from "sonner";
+import { Download } from "lucide-react";
 import { auth } from "@/firebase/client";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
@@ -32,6 +33,10 @@ const authFormSchema = (type: FormType) => {
 
 const AuthForm = ({ type }: { type: FormType }) => {
   const router = useRouter();
+  const windowsDownloadHref =
+    process.env.NEXT_PUBLIC_WINDOWS_DOWNLOAD_URL || "/api/desktop-download";
+  const macDownloadHref =
+    process.env.NEXT_PUBLIC_MAC_DOWNLOAD_URL || "/api/mac-download";
 
   const formSchema = authFormSchema(type);
   const form = useForm<z.infer<typeof formSchema>>({
@@ -119,17 +124,28 @@ const AuthForm = ({ type }: { type: FormType }) => {
 
         <h3 className="text-center sm:text-left">Practice job interviews with AI</h3>
 
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="text-sm font-semibold text-white">
-            Download Desktop App for Windows
-          </p>
-          <p className="mt-2 text-sm text-light-100">
-            Install the `.exe` on a Windows PC and run the app locally after
-            download.
-          </p>
-          <Button asChild className="btn-secondary mt-4 w-full sm:w-auto">
-            <Link href="/api/desktop-download">Download for Windows (.exe)</Link>
-          </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <a
+            href={windowsDownloadHref}
+            className="download-chip"
+            aria-label="Download for Windows"
+          >
+            <span>Download for Windows</span>
+            <span className="download-chip__icon">
+              <Download className="size-4" />
+            </span>
+          </a>
+
+          <a
+            href={macDownloadHref}
+            className="download-chip"
+            aria-label="Download for Mac"
+          >
+            <span>Download for Mac</span>
+            <span className="download-chip__icon">
+              <Download className="size-4" />
+            </span>
+          </a>
         </div>
 
         <Form {...form}>
