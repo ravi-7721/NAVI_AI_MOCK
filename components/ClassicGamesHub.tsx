@@ -42,18 +42,38 @@ const GAME_CARDS: Array<{
   },
 ];
 
-const SUDOKU_PUZZLE = [
-  [1, 0, 0, 4],
-  [0, 4, 1, 0],
-  [2, 0, 4, 0],
-  [0, 3, 0, 1],
-];
-
-const SUDOKU_SOLUTION = [
+const SUDOKU_BASE_SOLUTION = [
   [1, 2, 3, 4],
   [3, 4, 1, 2],
   [2, 1, 4, 3],
   [4, 3, 2, 1],
+];
+
+const SUDOKU_MASKS = [
+  [
+    [1, 0, 0, 1],
+    [0, 1, 1, 0],
+    [1, 0, 1, 0],
+    [0, 1, 0, 1],
+  ],
+  [
+    [1, 0, 1, 0],
+    [0, 1, 0, 1],
+    [1, 0, 0, 1],
+    [0, 1, 1, 0],
+  ],
+  [
+    [0, 1, 0, 1],
+    [1, 0, 1, 0],
+    [0, 1, 1, 0],
+    [1, 0, 0, 1],
+  ],
+  [
+    [0, 1, 1, 0],
+    [1, 0, 0, 1],
+    [0, 1, 0, 1],
+    [1, 0, 1, 0],
+  ],
 ];
 
 const WORDLE_WORDS = [
@@ -139,6 +159,34 @@ const getSudokuConflictMap = (grid: number[][]) =>
       return rowConflict || colConflict || boxConflict;
     }),
   );
+
+const shuffleArray = <T,>(items: T[]) => {
+  const copy = [...items];
+
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[randomIndex]] = [copy[randomIndex], copy[index]];
+  }
+
+  return copy;
+};
+
+const generateSudokuRound = () => {
+  const digitOrder = shuffleArray([1, 2, 3, 4]);
+  const rowOrder = [...shuffleArray([0, 1]), ...shuffleArray([2, 3])];
+  const colOrder = [...shuffleArray([0, 1]), ...shuffleArray([2, 3])];
+  const mask = SUDOKU_MASKS[Math.floor(Math.random() * SUDOKU_MASKS.length)];
+
+  const remapDigit = (value: number) => digitOrder[value - 1];
+  const solution = rowOrder.map((rowIndex) =>
+    colOrder.map((colIndex) => remapDigit(SUDOKU_BASE_SOLUTION[rowIndex][colIndex])),
+  );
+  const puzzle = solution.map((row, rowIndex) =>
+    row.map((cell, colIndex) => (mask[rowIndex][colIndex] ? cell : 0)),
+  );
+
+  return { puzzle, solution };
+};
 
 const createChessBoard = (): Array<Array<ChessPiece | null>> => [
   [
@@ -374,13 +422,18 @@ const getCapturedPieceSymbols = (
 };
 
 const SudokuGame = () => {
-  const [grid, setGrid] = React.useState(SUDOKU_PUZZLE.map((row) => [...row]));
+  const [round, setRound] = React.useState(() => generateSudokuRound());
+  const [grid, setGrid] = React.useState(() => round.puzzle.map((row) => [...row]));
   const conflicts = React.useMemo(() => getSudokuConflictMap(grid), [grid]);
 
-  const reset = () => setGrid(SUDOKU_PUZZLE.map((row) => [...row]));
+  const reset = React.useCallback(() => {
+    const nextRound = generateSudokuRound();
+    setRound(nextRound);
+    setGrid(nextRound.puzzle.map((row) => [...row]));
+  }, []);
 
   const updateCell = (row: number, col: number, value: string) => {
-    if (SUDOKU_PUZZLE[row][col] !== 0) return;
+    if (round.puzzle[row][col] !== 0) return;
     const normalized = value.replace(/[^1-4]/g, "");
     setGrid((current) =>
       current.map((gridRow, rowIndex) =>
@@ -392,9 +445,19 @@ const SudokuGame = () => {
   };
 
   const solved = grid.every((row, rowIndex) =>
-    row.every((cell, colIndex) => cell === SUDOKU_SOLUTION[rowIndex][colIndex]),
+    row.every((cell, colIndex) => cell === round.solution[rowIndex][colIndex]),
   );
   const hasConflicts = conflicts.some((row) => row.some(Boolean));
+
+  React.useEffect(() => {
+    if (!solved) return;
+
+    const timeoutId = window.setTimeout(() => {
+      reset();
+    }, 900);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [reset, solved]);
 
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
@@ -416,8 +479,8 @@ const SudokuGame = () => {
         <div className="mx-auto grid max-w-[560px] grid-cols-4 gap-3">
           {grid.map((row, rowIndex) =>
             row.map((cell, colIndex) => {
-              const fixed = SUDOKU_PUZZLE[rowIndex][colIndex] !== 0;
-              const correct = cell !== 0 && cell === SUDOKU_SOLUTION[rowIndex][colIndex];
+              const fixed = round.puzzle[rowIndex][colIndex] !== 0;
+              const correct = cell !== 0 && cell === round.solution[rowIndex][colIndex];
               const conflict = conflicts[rowIndex][colIndex];
 
               return (

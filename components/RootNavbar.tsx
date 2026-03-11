@@ -3,12 +3,33 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronDown } from "lucide-react";
+import {
+  BarChart3,
+  Bell,
+  BriefcaseBusiness,
+  Building2,
+  ChevronDown,
+  CircleHelp,
+  FileQuestion,
+  FileText,
+  Gauge,
+  Headphones,
+  History,
+  Home,
+  LayoutDashboard,
+  Settings,
+  Sparkles,
+  Trophy,
+  User,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type NavLink = {
   href: string;
   label: string;
+  icon: LucideIcon;
 };
 
 type RootNavbarProps = {
@@ -16,23 +37,23 @@ type RootNavbarProps = {
 };
 
 const allLinks: NavLink[] = [
-  { href: "/", label: "Home" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/logic-arena", label: "Logic Arena" },
-  { href: "/interview", label: "Interview" },
-  { href: "/interview-history", label: "History" },
-  { href: "/profile", label: "Profile" },
-  { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/analytics", label: "Analytics" },
-  { href: "/tech-stack-explorer", label: "Tech Explorer" },
-  { href: "/companies", label: "Companies" },
-  { href: "/notifications", label: "Notifications" },
-  { href: "/resume-lab", label: "Resume Lab" },
-  { href: "/questions", label: "Questions" },
-  { href: "/about", label: "About" },
-  { href: "/contact-support", label: "Support" },
-  { href: "/faq", label: "FAQ" },
-  { href: "/settings", label: "Settings" },
+  { href: "/", label: "Home", icon: Home },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/logic-arena", label: "Logic Arena", icon: Sparkles },
+  { href: "/interview", label: "Interview", icon: BriefcaseBusiness },
+  { href: "/interview-history", label: "History", icon: History },
+  { href: "/profile", label: "Profile", icon: User },
+  { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/tech-stack-explorer", label: "Tech Explorer", icon: Gauge },
+  { href: "/companies", label: "Companies", icon: Building2 },
+  { href: "/notifications", label: "Notifications", icon: Bell },
+  { href: "/resume-lab", label: "Resume Lab", icon: FileText },
+  { href: "/questions", label: "Questions", icon: FileQuestion },
+  { href: "/about", label: "About", icon: Users },
+  { href: "/contact-support", label: "Support", icon: Headphones },
+  { href: "/faq", label: "FAQ", icon: CircleHelp },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 const primaryLinkHrefs = new Set([
@@ -89,17 +110,22 @@ const RootNavbar = ({ logoutAction }: RootNavbarProps) => {
     <div className="header-shell">
       <div className="header-nav">
         <div className="header-nav__links">
-          {primaryLinks.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`header-link ${
-                isActiveLink(pathname, item.href) ? "header-link--active" : ""
-              }`}
-            >
-              {item.label}
-            </Link>
-          ))}
+          {primaryLinks.map((item) => {
+            const Icon = item.icon;
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`header-link ${
+                  isActiveLink(pathname, item.href) ? "header-link--active" : ""
+                }`}
+              >
+                <Icon className="size-4" />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
 
           <div className="header-more" ref={moreRef}>
             <button
@@ -123,21 +149,26 @@ const RootNavbar = ({ logoutAction }: RootNavbarProps) => {
 
             {isMoreOpen ? (
               <div className="header-more__menu" role="menu">
-                {secondaryLinks.map((item) => (
-                  <Link
-                    key={`${item.href}-${item.label}`}
-                    href={item.href}
-                    className={`header-more__item ${
-                      isActiveLink(pathname, item.href)
-                        ? "header-more__item--active"
-                        : ""
-                    }`}
-                    role="menuitem"
-                    onClick={() => setIsMoreOpen(false)}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
+                {secondaryLinks.map((item) => {
+                  const Icon = item.icon;
+
+                  return (
+                    <Link
+                      key={`${item.href}-${item.label}`}
+                      href={item.href}
+                      className={`header-more__item ${
+                        isActiveLink(pathname, item.href)
+                          ? "header-more__item--active"
+                          : ""
+                      }`}
+                      role="menuitem"
+                      onClick={() => setIsMoreOpen(false)}
+                    >
+                      <Icon className="size-4" />
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
               </div>
             ) : null}
           </div>
