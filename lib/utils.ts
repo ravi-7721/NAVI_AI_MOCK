@@ -6,39 +6,35 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const techIconBaseURL = "https://cdn.jsdelivr.net/gh/devicons/devicon/icons";
+const TECH_ICON_CATALOG: Record<string, { label: string; url: string }> = {
+  html5: { label: "HTML", url: "/tech-icons/html.svg" },
+  css3: { label: "CSS", url: "/tech-icons/css.svg" },
+  javascript: { label: "JavaScript", url: "/tech-icons/javascript.svg" },
+  typescript: { label: "TypeScript", url: "/tech-icons/javascript.svg" },
+  java: { label: "Java", url: "/tech-icons/java.svg" },
+  python: { label: "Python", url: "/tech-icons/python.svg" },
+  sql: { label: "SQL", url: "/tech-icons/sql.svg" },
+  mysql: { label: "MySQL", url: "/tech-icons/mysql.svg" },
+  nosql: { label: "NoSQL", url: "/tech-icons/nosql.svg" },
+  mongodb: { label: "MongoDB", url: "/tech-icons/nosql.svg" },
+  spring: { label: "Spring Boot", url: "/tech-icons/java.svg" },
+};
 
 const normalizeTechName = (tech: string) => {
   const key = tech.toLowerCase().replace(/\.js$/, "").replace(/\s+/g, "");
-  return mappings[key as keyof typeof mappings];
-};
-
-const checkIconExists = async (url: string) => {
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    return response.ok; // Returns true if the icon exists
-  } catch {
-    return false;
-  }
+  return mappings[key as keyof typeof mappings] || key;
 };
 
 export const getTechLogos = async (techArray: string[]) => {
-  const logoURLs = techArray.map((tech) => {
+  return techArray.map((tech) => {
     const normalized = normalizeTechName(tech);
+    const catalogEntry = TECH_ICON_CATALOG[normalized];
+
     return {
-      tech,
-      url: `${techIconBaseURL}/${normalized}/${normalized}-original.svg`,
+      tech: catalogEntry?.label || tech,
+      url: catalogEntry?.url || "/tech.svg",
     };
   });
-
-  const results = await Promise.all(
-    logoURLs.map(async ({ tech, url }) => ({
-      tech,
-      url: (await checkIconExists(url)) ? url : "/tech.svg",
-    }))
-  );
-
-  return results;
 };
 
 export const getRandomInterviewCover = () => {

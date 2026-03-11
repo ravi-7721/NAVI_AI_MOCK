@@ -39,6 +39,11 @@ interface User {
   email: string;
   id: string;
   profileURL?: string;
+  dateOfBirth?: string;
+  age?: number;
+  education?: string;
+  hobbies?: string[];
+  personalDetails?: string;
   settings?: UserSettings;
 }
 

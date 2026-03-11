@@ -5,6 +5,25 @@ import { redirect } from "next/navigation";
 
 import { isAuthenticated } from "@/lib/actions/auth.action";
 
+const navLinks = [
+  { href: "/", label: "Home" },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/api/desktop-download", label: "Download App" },
+  { href: "/profile", label: "Profile" },
+  { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/interview-history", label: "History" },
+  { href: "/analytics", label: "Analytics" },
+  { href: "/tech-stack-explorer", label: "Tech Explorer" },
+  { href: "/companies", label: "Companies" },
+  { href: "/notifications", label: "Notifications" },
+  { href: "/resume-lab", label: "Resume Lab" },
+  { href: "/questions", label: "Questions" },
+  { href: "/about", label: "About" },
+  { href: "/contact-support", label: "Support" },
+  { href: "/faq", label: "FAQ" },
+  { href: "/settings", label: "Settings" },
+];
+
 const Layout = async ({ children }: { children: ReactNode }) => {
   const isUserAuthenticated = await isAuthenticated();
   if (!isUserAuthenticated) redirect("/sign-in");
@@ -13,30 +32,23 @@ const Layout = async ({ children }: { children: ReactNode }) => {
     <div className="root-layout">
       <nav>
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex min-w-0 items-center gap-2">
             <Image src="/logo.svg" alt="MockMate Logo" width={38} height={32} />
-            <h2 className="text-primary-100">Ai Interview Prepration</h2>
+            <h2 className="text-primary-100 text-lg sm:text-2xl">
+              Ai Interview Prepration
+            </h2>
           </Link>
 
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <Link href="/" className="btn-secondary !px-4 !min-h-9">
-              Homepage
-            </Link>
-            <Link href="/dashboard" className="btn-secondary !px-4 !min-h-9">
-              Dashboard
-            </Link>
-            <Link href="/leaderboard" className="btn-secondary !px-4 !min-h-9">
-              Leaderboard
-            </Link>
-            <Link href="/resume-lab" className="btn-secondary !px-4 !min-h-9">
-              Resume Lab
-            </Link>
-            <Link href="/questions" className="btn-secondary !px-4 !min-h-9">
-              Questions
-            </Link>
-            <Link href="/settings" className="btn-secondary !px-4 !min-h-9">
-              Settings
-            </Link>
+          <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+            {navLinks.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="btn-secondary !min-h-9 !w-full !px-3 text-center text-sm sm:!px-4"
+              >
+                {item.label}
+              </Link>
+            ))}
           </div>
         </div>
       </nav>

@@ -1,0 +1,8 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="16" fill="#14532D"/>
+  <ellipse cx="24" cy="24" rx="10" ry="5" fill="white" fill-opacity=".92"/>
+  <path d="M14 24V34C14 36.8 18.5 39 24 39C29.5 39 34 36.8 34 34V24" stroke="white" stroke-width="2.5"/>
+  <ellipse cx="41" cy="33" rx="9" ry="4.5" fill="#BBF7D0"/>
+  <path d="M32 33V42C32 44.5 36 46.5 41 46.5C46 46.5 50 44.5 50 42V33" stroke="#BBF7D0" stroke-width="2.5"/>
+  <text x="32" y="56" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="white">NOSQL</text>
+</svg>

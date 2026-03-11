@@ -36,7 +36,7 @@ const Page = async ({ params, searchParams }: PageProps) => {
   }
   return (
     <>
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <h3>Interview generation</h3>
       </div>
 

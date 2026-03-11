@@ -13,6 +13,32 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   interviewGoal: "Improve confidence and answer clarity.",
 };
 
+const normalizeHobbies = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, 10);
+};
+
+const isUploadFileLike = (value: FormDataEntryValue | null): value is File => {
+  if (!value || typeof value === "string") return false;
+
+  const file = value as Partial<File>;
+  return (
+    typeof file.size === "number" &&
+    typeof file.arrayBuffer === "function" &&
+    typeof file.name === "string"
+  );
+};
+
+const fileToDataUrl = async (file: File) => {
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const mimeType = file.type || "image/jpeg";
+  return `data:${mimeType};base64,${bytes.toString("base64")}`;
+};
+
 // Set session cookie
 export async function setSessionCookie(idToken: string) {
   const cookieStore = await cookies();
@@ -208,6 +234,48 @@ export async function updateUserSettings(
     return true;
   } catch (error) {
     console.error("Error updating user settings:", error);
+    return false;
+  }
+}
+
+export async function updateUserProfile(
+  userId: string,
+  profile: {
+    name?: string;
+    profileURL?: string;
+    profileImage?: FormDataEntryValue | null;
+    dateOfBirth?: string;
+    age?: number;
+    education?: string;
+    hobbies?: string[];
+    personalDetails?: string;
+  },
+): Promise<boolean> {
+  try {
+    const nextProfileUrl =
+      isUploadFileLike(profile.profileImage) && profile.profileImage.size > 0
+        ? await fileToDataUrl(profile.profileImage)
+        : (profile.profileURL || "").trim();
+
+    await db.collection("users").doc(userId).set(
+      {
+        name: (profile.name || "").trim(),
+        profileURL: nextProfileUrl,
+        dateOfBirth: (profile.dateOfBirth || "").trim(),
+        age:
+          typeof profile.age === "number" && Number.isFinite(profile.age)
+            ? Math.max(0, Math.min(120, Math.round(profile.age)))
+            : null,
+        education: (profile.education || "").trim(),
+        hobbies: normalizeHobbies(profile.hobbies),
+        personalDetails: (profile.personalDetails || "").trim(),
+      },
+      { merge: true },
+    );
+
+    return true;
+  } catch (error) {
+    console.error("Error updating user profile:", error);
     return false;
   }
 }

@@ -110,14 +110,27 @@ const AuthForm = ({ type }: { type: FormType }) => {
   const isSignIn = type === "sign-in";
 
   return (
-    <div className="card-border lg:min-w-[566px]">
-      <div className="flex flex-col gap-6 card py-14 px-10">
-        <div className="flex flex-row gap-2 justify-center">
+    <div className="card-border w-full max-w-[566px]">
+      <div className="card flex flex-col gap-6 px-5 py-10 sm:px-8 sm:py-12 lg:px-10 lg:py-14">
+        <div className="flex flex-row justify-center gap-2">
           <Image src="/logo.svg" alt="logo" height={32} width={38} />
           <h2 className="text-primary-100">Ai Interview</h2>
         </div>
 
-        <h3>Practice job interviews with AI</h3>
+        <h3 className="text-center sm:text-left">Practice job interviews with AI</h3>
+
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <p className="text-sm font-semibold text-white">
+            Download Desktop App for Windows
+          </p>
+          <p className="mt-2 text-sm text-light-100">
+            Install the `.exe` on a Windows PC and run the app locally after
+            download.
+          </p>
+          <Button asChild className="btn-secondary mt-4 w-full sm:w-auto">
+            <Link href="/api/desktop-download">Download for Windows (.exe)</Link>
+          </Button>
+        </div>
 
         <Form {...form}>
           <form

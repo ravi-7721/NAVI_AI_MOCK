@@ -211,11 +211,11 @@ const inferInterviewMeta = (selectedQuestions: string[]) => {
   }
 
   const techstack: string[] = [];
-  if (hasJava) techstack.push("Java", "Spring Boot");
+  if (hasJava) techstack.push("HTML", "CSS", "JavaScript", "Java", "Spring Boot");
   if (hasPython) techstack.push("Python", "Django");
   if (hasDotnet) techstack.push("C#", ".NET");
-  if (hasFrontend) techstack.push("React", "TypeScript");
-  if (hasBackend) techstack.push("Node.js", "SQL");
+  if (hasFrontend) techstack.push("HTML", "CSS", "JavaScript", "React", "TypeScript");
+  if (hasBackend) techstack.push("Node.js", "SQL", "MySQL", "NoSQL");
   if (hasDevops) techstack.push("Docker", "Kubernetes");
   if (hasMl) techstack.push("Python", "LLM");
   if (hasData) techstack.push("SQL", "Analytics");
@@ -788,13 +788,13 @@ const Agent = ({
                   }
                   className="w-full rounded-md bg-dark-200 border border-dark-300 px-3 py-2 text-white"
                 />
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <button
                     type="button"
                     onClick={() => {
                       void handleSubmitAnswer();
                     }}
-                    className="btn-primary"
+                    className="btn-primary w-full sm:w-auto"
                     disabled={isGeneratingReport}
                   >
                     {currentQuestionIndex === -1
@@ -804,7 +804,7 @@ const Agent = ({
                   <button
                     type="button"
                     onClick={handleListenAgain}
-                    className="btn-secondary"
+                    className="btn-secondary w-full sm:w-auto"
                     disabled={isGeneratingReport}
                   >
                     {currentQuestionIndex === -1

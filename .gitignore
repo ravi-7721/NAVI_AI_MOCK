@@ -19,6 +19,10 @@
 
 # production
 /build
+/release
+build-desktop.log
+build-desktop-debug.log
+desktop-package.log
 
 # misc
 .DS_Store

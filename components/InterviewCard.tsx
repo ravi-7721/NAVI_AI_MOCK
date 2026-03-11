@@ -49,7 +49,7 @@ const InterviewCard = async ({
     getInterviewCoverBySeed(`${interviewId || displayRole}-${createdAt || ""}`);
 
   return (
-    <div className="card-border w-[360px] max-sm:w-full min-h-96">
+    <div className="card-border min-h-96 w-full max-w-[360px]">
       <div className="card-interview">
         <div>
           {/* Type Badge */}
@@ -75,8 +75,8 @@ const InterviewCard = async ({
           <h3 className="mt-5 capitalize">{displayRole} Interview</h3>
 
           {/* Date & Score */}
-          <div className="flex flex-row gap-5 mt-3">
-            <div className="flex flex-row gap-2">
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:gap-5">
+            <div className="flex flex-row items-center gap-2">
               <Image
                 src="/calendar.svg"
                 width={22}
@@ -86,7 +86,7 @@ const InterviewCard = async ({
               <p>{formattedDate}</p>
             </div>
 
-            <div className="flex flex-row gap-2 items-center">
+            <div className="flex flex-row items-center gap-2">
               {/* visual star rating plus numeric score */}
               {feedback ? (
                 <>
@@ -109,11 +109,11 @@ const InterviewCard = async ({
           </p>
         </div>
 
-        <div className="flex flex-row justify-between items-center">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <DisplayTechIcons techStack={techstack} />
 
           <div className="flex gap-2">
-            <Button asChild className="btn-primary">
+            <Button asChild className="btn-primary w-full sm:w-auto">
               <Link href={`/interview/${interviewId}/feedback`}>View Report</Link>
             </Button>
           </div>

@@ -30,7 +30,7 @@ const LeaderboardPage = async () => {
 
       <section className="card-border w-full">
         <div className="card p-6">
-          <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
             <h3 className="text-xl">Top Candidates</h3>
             <p className="text-sm text-light-400">Updated from live interview data</p>
           </div>
@@ -38,8 +38,65 @@ const LeaderboardPage = async () => {
           {leaderboard.length === 0 ? (
             <p>No leaderboard data yet. Complete interviews to populate rankings.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
+            <>
+              <div className="space-y-3 md:hidden">
+                {leaderboard.map((entry) => {
+                  const isMe = user?.id === entry.userId;
+
+                  return (
+                    <div
+                      key={entry.userId}
+                      className={[
+                        "rounded-2xl border border-white/10 bg-white/5 p-4",
+                        isMe ? "border-primary-200/40 bg-primary-200/10" : "",
+                      ].join(" ")}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-primary-200">
+                            #{entry.rank}
+                          </p>
+                          <p className="mt-1 text-white">
+                            {entry.name} {isMe ? "(You)" : ""}
+                          </p>
+                          {entry.email && (
+                            <p className="mt-1 text-xs text-light-400">{entry.email}</p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-light-400">Competitive Score</p>
+                          <p className="mt-1 text-lg font-semibold text-primary-200">
+                            {entry.competitiveScore}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                        <div>
+                          <p className="text-light-400">Avg Score</p>
+                          <p className="mt-1 text-white">{entry.averageScore}/100</p>
+                        </div>
+                        <div>
+                          <p className="text-light-400">Improvement</p>
+                          <p className="mt-1 text-white">+{entry.improvementScore}</p>
+                        </div>
+                        <div>
+                          <p className="text-light-400">Consistency</p>
+                          <p className="mt-1 text-white">{entry.consistencyScore}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 text-sm">
+                        <span className="text-light-400">Interviews: </span>
+                        <span className="text-white">{entry.interviews}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-x-auto md:block">
+                <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/10 text-left text-light-400">
                     <th className="py-2 pr-3">Rank</th>
@@ -85,8 +142,9 @@ const LeaderboardPage = async () => {
                     );
                   })}
                 </tbody>
-              </table>
-            </div>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </section>

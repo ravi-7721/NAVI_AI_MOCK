@@ -51,9 +51,19 @@ const Page = async () => {
             Practice real interview questions & get instant feedback
           </p>
 
-          <Button asChild className="btn-primary max-sm:w-full">
-            <Link href="/interview">Start an Interview</Link>
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button asChild className="btn-primary max-sm:w-full">
+              <Link href="/interview">Start an Interview</Link>
+            </Button>
+            <Button asChild className="btn-secondary max-sm:w-full">
+              <Link href="/api/desktop-download">Download Windows App (.exe)</Link>
+            </Button>
+          </div>
+
+          <p className="text-sm text-light-400">
+            Build the installer with <code>npm run dist:win</code>, then use this
+            button to download the generated `.exe`.
+          </p>
 
         </div>
 
@@ -62,7 +72,7 @@ const Page = async () => {
           alt="robo-dude"
           width={400}
           height={400}
-          className="max-sm:hidden"
+          className="mx-auto h-auto w-full max-w-[240px] sm:max-w-[300px] lg:max-w-[400px]"
         />
       </section>
 

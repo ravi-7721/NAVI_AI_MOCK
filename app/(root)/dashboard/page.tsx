@@ -79,9 +79,9 @@ const DashboardPage = async () => {
 
       <section className="card-border w-full">
         <div className="card p-6">
-          <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
             <h3 className="text-xl">Recent Interviews</h3>
-            <Button asChild className="btn-secondary">
+            <Button asChild className="btn-secondary w-full sm:w-auto">
               <Link href="/interview">Create Interview</Link>
             </Button>
           </div>
@@ -89,8 +89,55 @@ const DashboardPage = async () => {
           {recentInterviews.length === 0 ? (
             <p>No interviews yet. Create your first one to start tracking progress.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
+            <>
+              <div className="space-y-3 md:hidden">
+                {recentInterviews.map((interview) => (
+                  <div
+                    key={interview.id}
+                    className="rounded-2xl border border-white/10 bg-white/5 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-light-400">
+                          Role
+                        </p>
+                        <p className="mt-1 text-white">
+                          {getDisplayInterviewRole(
+                            interview.role,
+                            interview.techstack,
+                            interview.id,
+                          )}
+                        </p>
+                      </div>
+                      <Link
+                        href={`/interview/${interview.id}`}
+                        className="rounded-full border border-primary-200/40 px-3 py-1 text-sm text-primary-200 hover:bg-primary-200/10"
+                      >
+                        Resume
+                      </Link>
+                    </div>
+                    <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                      <div>
+                        <p className="text-light-400">Type</p>
+                        <p className="mt-1 text-white">{interview.type}</p>
+                      </div>
+                      <div>
+                        <p className="text-light-400">Level</p>
+                        <p className="mt-1 text-white">{interview.level}</p>
+                      </div>
+                      <div>
+                        <p className="text-light-400">Questions</p>
+                        <p className="mt-1 text-white">
+                          {interview.questions?.length ?? 0}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden overflow-x-auto md:block">
+                <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/10 text-left text-light-400">
                     <th className="py-2 pr-3">Role</th>
@@ -124,8 +171,9 @@ const DashboardPage = async () => {
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </section>

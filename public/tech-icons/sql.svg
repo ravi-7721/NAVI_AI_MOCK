@@ -1,0 +1,7 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="16" fill="#0F766E"/>
+  <ellipse cx="32" cy="20" rx="16" ry="6" fill="white" fill-opacity=".95"/>
+  <path d="M16 20V37C16 40.3 23.2 43 32 43C40.8 43 48 40.3 48 37V20" stroke="white" stroke-width="3"/>
+  <path d="M16 28C16 31.3 23.2 34 32 34C40.8 34 48 31.3 48 28" stroke="white" stroke-width="3"/>
+  <text x="32" y="56" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="white">SQL</text>
+</svg>

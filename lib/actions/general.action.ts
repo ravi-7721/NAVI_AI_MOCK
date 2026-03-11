@@ -207,6 +207,27 @@ export async function getFeedbackByInterviewId(
   return { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
 }
 
+export async function getFeedbackByUserId(userId: string): Promise<Feedback[]> {
+  try {
+    const snapshot = await db
+      .collection("feedback")
+      .where("userId", "==", userId)
+      .get();
+
+    return snapshot.docs
+      .map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      ) as Feedback[];
+  } catch (error) {
+    console.error("Error getting feedback by user:", error);
+    return [];
+  }
+}
+
 export async function getLatestInterviews(
   params: GetLatestInterviewsParams,
 ): Promise<Interview[] | null> {
@@ -589,6 +610,8 @@ const buildFallbackInterviewFromResume = (params: {
       : "Mid";
 
   const techstack: string[] = [];
+  if (/html/.test(text)) techstack.push("HTML");
+  if (/css|tailwind|bootstrap/.test(text)) techstack.push("CSS");
   if (/react/.test(text)) techstack.push("React");
   if (/next/.test(text)) techstack.push("Next.js");
   if (/typescript/.test(text)) techstack.push("TypeScript");
@@ -597,6 +620,8 @@ const buildFallbackInterviewFromResume = (params: {
   if (/python/.test(text)) techstack.push("Python");
   if (/java/.test(text)) techstack.push("Java");
   if (/sql|postgres|mysql/.test(text)) techstack.push("SQL");
+  if (/mysql/.test(text)) techstack.push("MySQL");
+  if (/nosql|mongo/.test(text)) techstack.push("NoSQL");
   if (/mongodb/.test(text)) techstack.push("MongoDB");
   if (/aws|azure|gcp/.test(text)) techstack.push("Cloud");
   if (techstack.length < 2) techstack.push("Problem Solving", "Communication");
