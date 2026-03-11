@@ -149,3 +149,38 @@ interface InterviewFormProps {
 interface TechIconProps {
   techStack: string[];
 }
+
+interface LogicArenaQuestion {
+  id: string;
+  stack: string;
+  difficulty: string;
+  mode: string;
+  question: string;
+  options: string[];
+  answerIndex: number;
+  explanation: string;
+  tags: string[];
+}
+
+interface LogicArenaStats {
+  totalRounds: number;
+  bestScore: number;
+  averageAccuracy: number;
+  favoriteStack: string;
+}
+
+interface LogicArenaSession {
+  id: string;
+  userId: string;
+  stack: string;
+  mode: string;
+  difficulty: string;
+  title: string;
+  source: "ai" | "fallback";
+  score: number;
+  accuracy: number;
+  correctCount: number;
+  questionCount: number;
+  bestStreak: number;
+  createdAt: string;
+}

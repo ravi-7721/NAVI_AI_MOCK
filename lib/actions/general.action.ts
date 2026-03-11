@@ -579,6 +579,85 @@ export async function getCompetitiveLeaderboard(
   }
 }
 
+export async function getLogicArenaStatsByUserId(
+  userId: string,
+): Promise<LogicArenaStats> {
+  try {
+    const snapshot = await db
+      .collection("logicArenaSessions")
+      .where("userId", "==", userId)
+      .get();
+
+    if (snapshot.empty) {
+      return {
+        totalRounds: 0,
+        bestScore: 0,
+        averageAccuracy: 0,
+        favoriteStack: "N/A",
+      };
+    }
+
+    const sessions = snapshot.docs.map((doc) => doc.data() as LogicArenaSession);
+    const stackCounts = new Map<string, number>();
+
+    sessions.forEach((session) => {
+      const stack = session.stack?.trim() || "Unknown";
+      stackCounts.set(stack, (stackCounts.get(stack) || 0) + 1);
+    });
+
+    const favoriteStack =
+      [...stackCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "N/A";
+
+    const bestScore = Math.max(...sessions.map((session) => Number(session.score || 0)));
+    const averageAccuracy = Math.round(
+      sessions.reduce((sum, session) => sum + Number(session.accuracy || 0), 0) /
+        sessions.length,
+    );
+
+    return {
+      totalRounds: sessions.length,
+      bestScore,
+      averageAccuracy,
+      favoriteStack,
+    };
+  } catch (error) {
+    console.error("Error getting Logic Arena stats:", error);
+    return {
+      totalRounds: 0,
+      bestScore: 0,
+      averageAccuracy: 0,
+      favoriteStack: "N/A",
+    };
+  }
+}
+
+export async function getRecentLogicArenaSessionsByUserId(
+  userId: string,
+  limit = 5,
+): Promise<LogicArenaSession[]> {
+  try {
+    const snapshot = await db
+      .collection("logicArenaSessions")
+      .where("userId", "==", userId)
+      .get();
+
+    return snapshot.docs
+      .map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .sort((a, b) =>
+        String((b as LogicArenaSession).createdAt || "").localeCompare(
+          String((a as LogicArenaSession).createdAt || ""),
+        ),
+      )
+      .slice(0, Math.max(1, limit)) as LogicArenaSession[];
+  } catch (error) {
+    console.error("Error getting recent Logic Arena sessions:", error);
+    return [];
+  }
+}
+
 const resumeInterviewSchema = z.object({
   role: z.string().min(1),
   level: z.enum(["Junior", "Mid", "Senior"]),

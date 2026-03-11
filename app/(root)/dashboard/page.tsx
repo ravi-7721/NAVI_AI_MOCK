@@ -5,6 +5,8 @@ import { getCurrentUser } from "@/lib/actions/auth.action";
 import {
   getDashboardStatsByUserId,
   getInterviewsByUserId,
+  getLogicArenaStatsByUserId,
+  getRecentLogicArenaSessionsByUserId,
 } from "@/lib/actions/general.action";
 import { getDisplayInterviewRole } from "@/lib/utils";
 
@@ -12,10 +14,12 @@ const DashboardPage = async () => {
   const user = await getCurrentUser();
   const userId = user?.id;
 
-  const [stats, interviews] = userId
+  const [stats, interviews, logicArenaStats, logicArenaSessions] = userId
     ? await Promise.all([
         getDashboardStatsByUserId(userId),
         getInterviewsByUserId(userId),
+        getLogicArenaStatsByUserId(userId),
+        getRecentLogicArenaSessionsByUserId(userId),
       ])
     : [
         {
@@ -24,6 +28,13 @@ const DashboardPage = async () => {
           averageScore: 0,
           strongestCategory: "N/A",
           weakestCategory: "N/A",
+        },
+        [],
+        {
+          totalRounds: 0,
+          bestScore: 0,
+          averageAccuracy: 0,
+          favoriteStack: "N/A",
         },
         [],
       ];
@@ -175,6 +186,97 @@ const DashboardPage = async () => {
               </div>
             </>
           )}
+        </div>
+      </section>
+
+      <section className="card-border w-full">
+        <div className="card p-6">
+          <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <h3 className="text-xl">Logic Arena</h3>
+              <p className="mt-1 text-sm text-light-400">
+                Track how often you practice coding and reasoning rounds.
+              </p>
+            </div>
+            <Button asChild className="btn-secondary w-full sm:w-auto">
+              <Link href="/logic-arena">Play Logic Arena</Link>
+            </Button>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">Total Rounds</p>
+              <h3 className="mt-2">{logicArenaStats.totalRounds}</h3>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">Best Score</p>
+              <h3 className="mt-2">{logicArenaStats.bestScore}</h3>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">Average Accuracy</p>
+              <h3 className="mt-2">{logicArenaStats.averageAccuracy}%</h3>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">Favorite Stack</p>
+              <h3 className="mt-2 text-lg">{logicArenaStats.favoriteStack}</h3>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <h4 className="text-lg font-semibold text-white">Recent Rounds</h4>
+            {logicArenaSessions.length === 0 ? (
+              <p className="mt-3 text-sm text-light-400">
+                No Logic Arena rounds recorded yet. Play one round to see your stats here.
+              </p>
+            ) : (
+              <div className="mt-4 grid gap-3">
+                {logicArenaSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className="rounded-2xl border border-white/10 bg-white/5 p-4"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-light-400">
+                          {session.stack}
+                        </p>
+                        <p className="mt-1 text-white">{session.title}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-sm">
+                        <span className="rounded-full border border-primary-200/30 px-3 py-1 text-primary-100">
+                          {session.score} pts
+                        </span>
+                        <span className="rounded-full border border-white/10 px-3 py-1 text-light-100">
+                          {session.accuracy}% accuracy
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 text-sm sm:grid-cols-4">
+                      <div>
+                        <p className="text-light-400">Mode</p>
+                        <p className="mt-1 text-white">{session.mode}</p>
+                      </div>
+                      <div>
+                        <p className="text-light-400">Difficulty</p>
+                        <p className="mt-1 text-white">{session.difficulty}</p>
+                      </div>
+                      <div>
+                        <p className="text-light-400">Correct</p>
+                        <p className="mt-1 text-white">
+                          {session.correctCount}/{session.questionCount}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-light-400">Best Streak</p>
+                        <p className="mt-1 text-white">{session.bestStreak}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
