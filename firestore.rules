@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /interviews/{interviewId} {
+      allow read, write: if isOwner(resource.data.userId) ||
+        (request.resource != null && isOwner(request.resource.data.userId));
+    }
+
+    match /feedback/{feedbackId} {
+      allow read, write: if isOwner(resource.data.userId) ||
+        (request.resource != null && isOwner(request.resource.data.userId));
+    }
+
+    match /logicArenaSessions/{sessionId} {
+      allow read, write: if isOwner(resource.data.userId) ||
+        (request.resource != null && isOwner(request.resource.data.userId));
+    }
+
+    match /interviewReplays/{replayId} {
+      allow read, write: if isOwner(resource.data.userId) ||
+        (request.resource != null && isOwner(request.resource.data.userId));
+    }
+
+    match /answerCoaching/{coachingId} {
+      allow read, write: if isOwner(resource.data.userId) ||
+        (request.resource != null && isOwner(request.resource.data.userId));
+    }
+
+    match /userGamification/{docId} {
+      allow read, write: if isOwner(resource.data.userId) ||
+        (request.resource != null && isOwner(request.resource.data.userId));
+    }
+
+    match /weeklyChallenges/{challengeId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /badges/{badgeId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /interviewModes/{modeId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /_meta/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+  }
+}

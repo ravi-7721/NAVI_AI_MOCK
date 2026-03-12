@@ -324,3 +324,5 @@ export const interviewTemplates = [
     ],
   },
 ] as const;
+
+export { LIVE_CODING_CHALLENGES } from "./liveCoding";

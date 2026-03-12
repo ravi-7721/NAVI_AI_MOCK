@@ -76,6 +76,9 @@ const InterviewHistoryPage = async () => {
                     <Button asChild className="btn-secondary">
                       <Link href={`/interview/${interview.id}`}>Resume</Link>
                     </Button>
+                    <Button asChild className="btn-secondary">
+                      <Link href={`/interview/${interview.id}/replay`}>Replay</Link>
+                    </Button>
                     <Button asChild className="btn-primary">
                       <Link href={`/interview/${interview.id}/feedback`}>Feedback</Link>
                     </Button>

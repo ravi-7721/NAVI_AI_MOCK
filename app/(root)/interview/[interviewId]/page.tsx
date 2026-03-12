@@ -1,6 +1,8 @@
 import { getCurrentUser } from "@/lib/actions/auth.action";
 import { getInterviewById } from "@/lib/actions/general.action";
 import Agent from "@/components/Agent";
+import LiveCodingRound from "@/components/LiveCodingRound";
+import { LIVE_CODING_CHALLENGES } from "@/constants";
 
 interface PageProps {
   params: Promise<{
@@ -34,21 +36,49 @@ const Page = async ({ params, searchParams }: PageProps) => {
       </div>
     );
   }
+
+  const codingChallenges =
+    interview.roundType === "live-coding"
+      ? (() => {
+          const ids = interview.codingChallengeIds || [];
+          const byId = new Map(LIVE_CODING_CHALLENGES.map((challenge) => [challenge.id, challenge]));
+
+          if (ids.length > 0) {
+            return ids.map((id) => byId.get(id)).filter(Boolean) as CodingChallenge[];
+          }
+
+          const questionTitles = new Set(interview.questions || []);
+          return LIVE_CODING_CHALLENGES.filter((challenge) => questionTitles.has(challenge.title));
+        })()
+      : [];
+
   return (
     <>
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <h3>Interview generation</h3>
       </div>
 
-      <Agent
-        userName={user?.name ?? "Candidate"}
-        userId={user?.id}
-        profileImage={user?.profileURL}
-        interviewId={interview.id}
-        type="interview"
-        questions={interview.questions}
-        autoStart={autostart === "1"}
-      />
+      {interview.roundType === "live-coding" ? (
+        <LiveCodingRound
+          userName={user?.name ?? "Candidate"}
+          userId={user?.id}
+          interviewId={interview.id}
+          challenges={codingChallenges}
+          autoStart={autostart === "1"}
+          initialLanguage={interview.codingLanguage || "javascript"}
+        />
+      ) : (
+        <Agent
+          userName={user?.name ?? "Candidate"}
+          userId={user?.id}
+          profileImage={user?.profileURL}
+          interviewId={interview.id}
+          type="interview"
+          questions={interview.questions}
+          autoStart={autostart === "1"}
+          roundType={interview.roundType || "technical"}
+        />
+      )}
     </>
   );
 };

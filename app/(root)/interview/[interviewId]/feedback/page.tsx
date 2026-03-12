@@ -116,12 +116,20 @@ const Page = async ({ params }: PageProps) => {
         <p>{data.finalAssessment}</p>
       </section>
 
-      <Link
-        href="/dashboard"
-        className="inline-block rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 transition-colors"
-      >
-        &larr; Back to Dashboard
-      </Link>
+      <div className="flex flex-wrap gap-3">
+        <Link
+          href={`/interview/${interviewId}/replay`}
+          className="inline-block rounded-lg border border-primary-200/30 px-4 py-2 text-sm font-medium text-primary-100 hover:bg-primary-200/10 transition-colors"
+        >
+          View Replay
+        </Link>
+        <Link
+          href="/dashboard"
+          className="inline-block rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 transition-colors"
+        >
+          &larr; Back to Dashboard
+        </Link>
+      </div>
     </div>
   );
 };

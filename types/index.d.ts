@@ -25,6 +25,152 @@ interface Interview {
   type: string;
   finalized: boolean;
   coverImage?: string;
+  roundType?: InterviewRoundType;
+  codingLanguage?: CodingLanguage;
+  codingChallengeIds?: string[];
+  codingChallenges?: CodingChallenge[];
+}
+
+type InterviewRoundType =
+  | "hr"
+  | "technical"
+  | "managerial"
+  | "full-loop"
+  | "live-coding";
+
+type CodingLanguage = "javascript" | "python" | "java" | "go" | "ruby";
+type CodingValueType = "number" | "boolean" | "string" | "number[]" | "string[]";
+
+interface CodingChallengeParameter {
+  name: string;
+  type: CodingValueType;
+}
+
+interface CodingChallengeTestCase {
+  id: string;
+  title: string;
+  args: unknown[];
+  expected: unknown;
+  explanation?: string;
+}
+
+interface CodingChallenge {
+  id: string;
+  title: string;
+  prompt: string;
+  category: string;
+  difficulty: "Easy" | "Medium" | "Hard";
+  estimatedMinutes: number;
+  functionName: string;
+  parameters: CodingChallengeParameter[];
+  returnType: CodingValueType;
+  starterCodeByLanguage: Record<CodingLanguage, string>;
+  entryPointByLanguage?: Partial<Record<CodingLanguage, string>>;
+  supportedLanguages?: CodingLanguage[];
+  tags: string[];
+  hints: string[];
+  evaluationFocus: string[];
+  testCases: CodingChallengeTestCase[];
+}
+
+interface CodingCheckResult {
+  id: string;
+  title: string;
+  passed: boolean;
+  details: string;
+}
+
+interface CodingExecutionSummary {
+  language: CodingLanguage;
+  code: string;
+  explanation: string;
+  passedChecks: number;
+  totalChecks: number;
+  checkResults: CodingCheckResult[];
+}
+
+interface InterviewModeDefinition {
+  id: InterviewRoundType;
+  name: string;
+  description: string;
+  scoringFocus: string[];
+  targetQuestionCount: number;
+}
+
+interface AnswerCoaching {
+  id: string;
+  interviewId: string;
+  userId: string;
+  questionId: string;
+  question: string;
+  answer: string;
+  roundType: InterviewRoundType;
+  clarityScore: number;
+  relevanceScore: number;
+  depthScore: number;
+  overallScore: number;
+  strengths: string[];
+  improvements: string[];
+  quickTip: string;
+  shouldAskFollowUp: boolean;
+  suggestedFollowUpQuestion?: string;
+  updatedAt: string;
+}
+
+interface ReplayQuestionEntry {
+  id: string;
+  question: string;
+  answer: string;
+  askedAt: string;
+  answeredAt: string;
+  wasFollowUp: boolean;
+  followUpToQuestionId?: string | null;
+  coachingId?: string;
+  codingSummary?: CodingExecutionSummary;
+}
+
+interface InterviewReplay {
+  id: string;
+  interviewId: string;
+  userId: string;
+  roundType: InterviewRoundType;
+  startedAt: string;
+  completedAt: string;
+  qaLog: ReplayQuestionEntry[];
+}
+
+interface WeeklyChallengeGoal {
+  id: string;
+  label: string;
+  target: number;
+  metric: "interviewsCompleted" | "scoreDelta" | "logicArenaRounds";
+}
+
+interface WeeklyChallenge {
+  id: string;
+  name: string;
+  active: boolean;
+  goals: WeeklyChallengeGoal[];
+  rewardBadgeIds: string[];
+}
+
+interface UserGamification {
+  userId: string;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  totalPracticeDays: number;
+  interviewsCompleted: number;
+  logicArenaRounds: number;
+  badgesEarned: string[];
+  xp: number;
+  level: number;
+  weeklyChallengeId?: string;
+  weeklyProgress: {
+    interviewsCompleted: number;
+    scoreDelta: number;
+    logicArenaRounds: number;
+  };
+  lastPracticeAt?: string | null;
 }
 
 interface CreateFeedbackParams {
@@ -74,6 +220,16 @@ interface AgentProps {
   type: "generate" | "interview";
   questions?: string[];
   autoStart?: boolean;
+  roundType?: InterviewRoundType;
+}
+
+interface LiveCodingRoundProps {
+  userName: string;
+  userId?: string;
+  interviewId?: string;
+  challenges?: CodingChallenge[];
+  autoStart?: boolean;
+  initialLanguage?: CodingLanguage;
 }
 
 interface RouteParams {

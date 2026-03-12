@@ -8,8 +8,10 @@ import type { CreateAssistantDTO } from "@vapi-ai/web/dist/api";
 
 import { cn } from "@/lib/utils";
 import {
+  analyzeInterviewAnswer,
   createFeedback,
   createInterviewSession,
+  recordInterviewCompletion,
 } from "@/lib/actions/general.action";
 import { vapi } from "@/lib/vapi.sdk";
 
@@ -54,7 +56,7 @@ type SpeechRecognitionEvent = {
 
 const INTRO_QUESTION = "Tell me about yourself and your background.";
 const SILENCE_TIMEOUT_MS = 1700;
-const VAPI_ENABLED = Boolean(process.env.NEXT_PUBLIC_VAPI_WEB_TOKEN);
+const HAS_VAPI_TOKEN = Boolean(process.env.NEXT_PUBLIC_VAPI_WEB_TOKEN);
 
 const VOICE_AGENT: CreateAssistantDTO = {
   name: "Interviewer",
@@ -110,6 +112,78 @@ const DEFAULT_QUESTION_BANK = [
   "How do you prioritize tasks when everything feels urgent?",
   "What would your previous manager say about your work style?",
 ] as const;
+
+type InterviewQuestionItem = {
+  id: string;
+  question: string;
+  wasFollowUp: boolean;
+  followUpToQuestionId?: string | null;
+};
+
+const ROUND_QUESTION_BANKS: Record<InterviewRoundType, readonly string[]> = {
+  hr: [
+    "Walk me through your background and what led you to apply for this role.",
+    "Why do you want to work here?",
+    "Tell me about a time you handled conflict within a team.",
+    "Describe a situation where you had to work under pressure.",
+    "What motivates you at work?",
+    "Tell me about a failure and what you learned from it.",
+    "How do you respond to feedback from a manager or teammate?",
+    "Describe a time you showed ownership without being asked.",
+    "What kind of work environment helps you perform best?",
+    "Why should we hire you for this role?",
+  ],
+  technical: [
+    "Walk me through a recent technical project and the exact code or architecture decisions you owned.",
+    "Write or explain an algorithm to find duplicates in an array efficiently.",
+    "How do you debug an issue that only happens in production?",
+    "Explain the time and space complexity of a solution you recently implemented.",
+    "How would you design a scalable REST API for a high-traffic application?",
+    "Describe a performance bottleneck you fixed in code. What changed quantitatively?",
+    "How do you test edge cases before shipping a backend or frontend feature?",
+    "Explain a database schema or query optimization you implemented.",
+    "How would you prevent race conditions or data inconsistency in a concurrent system?",
+    "Walk through a recent bug from reproduction to root cause to final fix.",
+  ],
+  managerial: [
+    "Tell me about a time you led a team through a difficult deadline or delivery.",
+    "How do you prioritize work when multiple stakeholders need attention?",
+    "Tell me about a time you had to align a team around a difficult decision.",
+    "How do you balance delivery speed with quality and team health?",
+    "Describe a situation where expectations were unclear. What did you do?",
+    "How do you mentor or support less experienced teammates?",
+    "Tell me about a time you pushed back on a request and why.",
+    "How do you communicate risks early in a project?",
+    "Describe a decision you made with incomplete information.",
+    "How do you measure whether your work created business value?",
+  ],
+  "full-loop": [
+    "Tell me about yourself and how your experience fits this opportunity.",
+    "Why do you want to work here?",
+    "Describe a technically challenging project you built and your exact contribution.",
+    "How do you prioritize work when multiple stakeholders need attention?",
+    "Tell me about a time you aligned teammates around a difficult decision.",
+    "How do you debug an issue that only happens in production?",
+    "What kind of environment helps you perform at your best?",
+    "Tell me about a time you handled conflict within a team.",
+    "Explain a trade-off you made between performance, simplicity, and maintainability.",
+    "Describe a situation where expectations were unclear. What did you do?",
+    "Walk through a recent bug from discovery to resolution.",
+    "How do you respond to feedback from a manager or teammate?",
+    "How do you measure whether your work created business value?",
+  ],
+  "live-coding": [
+    "This round uses the dedicated live coding workspace instead of the voice interview flow.",
+  ],
+};
+
+const orderQuestionBank = (questions: readonly string[]) => {
+  const cleaned = [...new Set(questions.map((q) => q.trim()).filter(Boolean))];
+  if (cleaned.length <= 1) return cleaned;
+
+  const [openingQuestion, ...remainingQuestions] = cleaned;
+  return [openingQuestion, ...shuffle(remainingQuestions)];
+};
 
 const shuffle = <T,>(arr: T[]) => {
   const copy = [...arr];
@@ -275,6 +349,60 @@ const getRecognitionCtor = (): BrowserSpeechRecognitionCtor | null => {
 const normalizeSpeech = (value: string) =>
   value.toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
 
+const getVoiceFallbackSupport = () => {
+  if (typeof window === "undefined") return false;
+
+  return Boolean(getRecognitionCtor() || window.speechSynthesis);
+};
+
+const getVapiErrorMeta = (error: unknown) => {
+  if (typeof error === "string") {
+    return { type: "", message: error };
+  }
+
+  if (!error || typeof error !== "object") {
+    return { type: "", message: "Unknown Vapi error" };
+  }
+
+  const record = error as {
+    type?: string;
+    error?: {
+      message?: string;
+      msg?: string;
+      type?: string;
+      errorMsg?: string;
+    };
+    message?: {
+      msg?: string;
+      type?: string;
+    };
+  };
+
+  return {
+    type: String(record.type || record.error?.type || record.message?.type || ""),
+    message: String(
+      record.error?.message ||
+        record.error?.msg ||
+        record.error?.errorMsg ||
+        record.message?.msg ||
+        "Unknown Vapi error",
+    ),
+  };
+};
+
+const isRecoverableVapiDisconnect = (error: unknown) => {
+  const { type, message } = getVapiErrorMeta(error);
+  const combined = `${type} ${message}`.toLowerCase();
+
+  return (
+    combined.includes("send transport changed to disconnected") ||
+    combined.includes("meeting has ended") ||
+    combined.includes("ejected") ||
+    combined.includes("customer-ended-call") ||
+    combined.includes("disconnected")
+  );
+};
+
 const isValidInterviewAnswer = (answer: string, question: string) => {
   const normalizedAnswer = normalizeSpeech(answer);
   const normalizedQuestion = normalizeSpeech(question);
@@ -304,22 +432,26 @@ const Agent = ({
   type: _type,
   questions,
   autoStart = false,
+  roundType = "technical",
 }: AgentProps) => {
   void [_profileImage, _type];
 
   const router = useRouter();
   const safeQuestions = React.useMemo(() => questions ?? [], [questions]);
+  const effectiveRoundType = roundType;
+  const [voiceProvider, setVoiceProvider] = React.useState<"vapi" | "browser">(
+    HAS_VAPI_TOKEN ? "vapi" : "browser",
+  );
 
   const [callStatus, setCallStatus] = React.useState<CallStatus>(
     CallStatus.INACTIVE,
   );
-  const [sessionQuestions, setSessionQuestions] = React.useState<string[]>([]);
+  const [sessionQuestions, setSessionQuestions] = React.useState<InterviewQuestionItem[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = React.useState(-1);
   const [currentPrompt, setCurrentPrompt] = React.useState("");
   const [currentAnswer, setCurrentAnswer] = React.useState("");
-  const [qaLog, setQaLog] = React.useState<{ question: string; answer: string }[]>(
-    [],
-  );
+  const [qaLog, setQaLog] = React.useState<ReplayQuestionEntry[]>([]);
+  const [latestCoaching, setLatestCoaching] = React.useState<AnswerCoaching | null>(null);
   const [isListening, setIsListening] = React.useState(false);
   const [speechSupported, setSpeechSupported] = React.useState(true);
   const [isGeneratingReport, setIsGeneratingReport] = React.useState(false);
@@ -328,6 +460,7 @@ const Agent = ({
   const [resolvedInterviewId, setResolvedInterviewId] = React.useState<
     string | undefined
   >(interviewId);
+  const [startedAt, setStartedAt] = React.useState<string | null>(null);
 
   const recognitionRef = React.useRef<BrowserSpeechRecognition | null>(null);
   const spokenTextRef = React.useRef("");
@@ -342,6 +475,9 @@ const Agent = ({
   const callStatusRef = React.useRef<CallStatus>(CallStatus.INACTIVE);
   const currentQuestionIndexRef = React.useRef(-1);
   const currentPromptRef = React.useRef("");
+  const voiceProviderRef = React.useRef<"vapi" | "browser">(
+    HAS_VAPI_TOKEN ? "vapi" : "browser",
+  );
   const pendingSpeechRef = React.useRef<string | null>(null);
   const lastFinalTranscriptRef = React.useRef<{
     questionIndex: number;
@@ -350,9 +486,16 @@ const Agent = ({
   const lastSpokenQuestionIndexRef = React.useRef<number | null>(null);
   const isSpeaking = assistantSpeaking;
 
-  React.useEffect(() => {
-    setSpeechSupported(VAPI_ENABLED || !!getRecognitionCtor());
+  const setVoiceProviderMode = React.useCallback((nextMode: "vapi" | "browser") => {
+    voiceProviderRef.current = nextMode;
+    setVoiceProvider(nextMode);
   }, []);
+
+  React.useEffect(() => {
+    setSpeechSupported(
+      voiceProvider === "vapi" ? true : Boolean(getRecognitionCtor()),
+    );
+  }, [voiceProvider]);
 
   React.useEffect(() => {
     callStatusRef.current = callStatus;
@@ -378,7 +521,7 @@ const Agent = ({
     shouldAutoSubmitOnEndRef.current = false;
     clearSilenceTimer();
 
-    if (VAPI_ENABLED) {
+    if (voiceProviderRef.current === "vapi") {
       setIsListening(false);
       return;
     }
@@ -391,7 +534,7 @@ const Agent = ({
   }, [clearSilenceTimer]);
 
   const speakText = React.useCallback((text: string, onDone: () => void) => {
-    if (VAPI_ENABLED) {
+    if (voiceProviderRef.current === "vapi") {
       if (callStatusRef.current !== CallStatus.ACTIVE) {
         pendingSpeechRef.current = text;
         window.setTimeout(onDone, 50);
@@ -423,7 +566,7 @@ const Agent = ({
   }, []);
 
   const startListening = React.useCallback(() => {
-    if (VAPI_ENABLED) {
+    if (voiceProviderRef.current === "vapi") {
       setIsListening(true);
       return;
     }
@@ -519,7 +662,7 @@ const Agent = ({
   ]);
 
   React.useEffect(() => {
-    if (!VAPI_ENABLED) return;
+    if (!HAS_VAPI_TOKEN) return;
 
     const handleCallStart = () => {
       setCallStatus(CallStatus.ACTIVE);
@@ -579,11 +722,27 @@ const Agent = ({
     };
 
     const handleError = (error: unknown) => {
-      console.error(error);
-      const errorMessage =
-        typeof error === "object" && error !== null && "error" in error
-          ? String((error as { error?: { message?: string } }).error?.message || "Unknown Vapi error")
-          : String(error || "Unknown Vapi error");
+      const { message: errorMessage } = getVapiErrorMeta(error);
+
+      if (
+        voiceProviderRef.current === "vapi" &&
+        isRecoverableVapiDisconnect(error) &&
+        getVoiceFallbackSupport()
+      ) {
+        setVoiceProviderMode("browser");
+        setSpeechSupported(Boolean(getRecognitionCtor()));
+        setIsListening(false);
+        setAssistantSpeaking(false);
+        pendingSpeechRef.current = null;
+        void vapi.stop().catch(() => {});
+
+        if (callStatusRef.current === CallStatus.CONNECTING) {
+          setCallStatus(CallStatus.ACTIVE);
+        }
+
+        toast.error("Voice connection dropped. Switched to local voice mode.");
+        return;
+      }
 
       toast.error(`Voice agent failed: ${errorMessage}`);
       setCallStatus(CallStatus.INACTIVE);
@@ -620,40 +779,58 @@ const Agent = ({
       vapi.removeListener("call-start-failed", handleCallStartFailed);
       void vapi.stop();
     };
-  }, []);
+  }, [setVoiceProviderMode]);
 
   React.useEffect(() => {
     startListeningRef.current = startListening;
   }, [startListening]);
 
   const startVoiceAgentCall = React.useCallback(async () => {
-    if (!VAPI_ENABLED) return true;
+    if (!HAS_VAPI_TOKEN || voiceProviderRef.current !== "vapi") return true;
 
     try {
       const webCall = await vapi.start(VOICE_AGENT);
       if (!webCall) {
-        toast.error("Could not start the voice agent.");
-        setCallStatus(CallStatus.INACTIVE);
-        return false;
+        setVoiceProviderMode("browser");
+        setSpeechSupported(Boolean(getRecognitionCtor()));
+        toast.error("Voice agent unavailable. Switched to local voice mode.");
+        return true;
       }
 
       return true;
     } catch (error) {
-      console.error(error);
-      toast.error("Could not start the voice agent.");
+      if (getVoiceFallbackSupport()) {
+        setVoiceProviderMode("browser");
+        setSpeechSupported(Boolean(getRecognitionCtor()));
+        toast.error("Voice agent unavailable. Switched to local voice mode.");
+        return true;
+      }
+
+      const { message } = getVapiErrorMeta(error);
+      toast.error(`Could not start the voice agent. ${message}`);
       setCallStatus(CallStatus.INACTIVE);
       return false;
     }
+  }, [setVoiceProviderMode]);
+
+  const buildQuestionItems = React.useCallback((items: string[]) => {
+    return items.map((question, index) => ({
+      id: `q-${index + 1}`,
+      question,
+      wasFollowUp: false,
+      followUpToQuestionId: null,
+    }));
   }, []);
 
   const commitAnswer = React.useCallback(
-    (answer: string, index: number, baseLog?: { question: string; answer: string }[]) => {
+    (answer: string, index: number, baseLog?: ReplayQuestionEntry[]) => {
       const targetLog = baseLog ? [...baseLog] : [...qaLog];
       if (!targetLog[index]) return targetLog;
 
       targetLog[index] = {
         ...targetLog[index],
         answer: answer.trim() || "(No answer)",
+        answeredAt: new Date().toISOString(),
       };
 
       return targetLog;
@@ -662,7 +839,7 @@ const Agent = ({
   );
 
   const generateAndNavigateReport = React.useCallback(
-    async (finalLog: { question: string; answer: string }[]) => {
+    async (finalLog: ReplayQuestionEntry[]) => {
       setIsGeneratingReport(true);
 
       try {
@@ -693,6 +870,16 @@ const Agent = ({
           return;
         }
 
+        await recordInterviewCompletion({
+          interviewId: idToUse,
+          userId,
+          roundType: effectiveRoundType,
+          startedAt: startedAt || new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          qaLog: finalLog,
+          totalScore: result.totalScore,
+        });
+
         setCallStatus(CallStatus.FINISHED);
         router.push(`/interview/${idToUse}/feedback`);
         router.refresh();
@@ -704,7 +891,7 @@ const Agent = ({
         setIsGeneratingReport(false);
       }
     },
-    [feedbackId, resolvedInterviewId, router, userId],
+    [effectiveRoundType, feedbackId, resolvedInterviewId, router, startedAt, userId],
   );
 
   const handleListenAgain = React.useCallback(() => {
@@ -718,7 +905,7 @@ const Agent = ({
 
   const endInterviewAndGenerateReport = React.useCallback(async () => {
     stopListening();
-    if (VAPI_ENABLED) {
+    if (voiceProviderRef.current === "vapi") {
       await vapi.stop();
     } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -743,79 +930,151 @@ const Agent = ({
       (typeof overrideAnswer === "string" ? overrideAnswer : currentAnswer).trim();
 
     try {
-    if (currentQuestionIndex === -1) {
-      const bank = safeQuestions.length > 0 ? safeQuestions : [...DEFAULT_QUESTION_BANK];
-      const uniqueBank = [...new Set(bank.map((q) => q.trim()).filter(Boolean))];
-      const remainingQuestions = uniqueBank.filter(
-        (q) => q.toLowerCase() !== INTRO_QUESTION.toLowerCase(),
-      );
-      const orderedBank = [INTRO_QUESTION, ...shuffle(remainingQuestions)];
-      const count = extractQuestionCount(answerText, orderedBank.length);
+      if (currentQuestionIndex === -1) {
+        const bank =
+          safeQuestions.length > 0
+            ? safeQuestions
+            : [...(ROUND_QUESTION_BANKS[effectiveRoundType] || DEFAULT_QUESTION_BANK)];
+        const orderedBank = orderQuestionBank(bank);
+        const count = extractQuestionCount(answerText, orderedBank.length);
 
-      if (!count) {
-        toast.error("Please enter how many questions you want (for example: 5).");
+        if (!count) {
+          toast.error("Please enter how many questions you want (for example: 5).");
+          return;
+        }
+
+        const selected = orderedBank.slice(0, count);
+        if (!interviewId && userId) {
+          const interviewMeta = inferInterviewMeta(selected);
+          const created = await createInterviewSession({
+            userId,
+            questions: selected,
+            role: interviewMeta.role,
+            type: interviewMeta.type,
+            level: interviewMeta.level,
+            techstack: interviewMeta.techstack,
+            roundType: effectiveRoundType,
+          });
+
+          if (created.success) {
+            setResolvedInterviewId(created.interviewId);
+          } else {
+            toast.error("Failed to create interview session.");
+            return;
+          }
+        }
+
+        const selectedQuestions = buildQuestionItems(selected);
+        const now = new Date().toISOString();
+
+        setSessionQuestions(selectedQuestions);
+        setQaLog(
+          selectedQuestions.map((item) => ({
+            id: item.id,
+            question: item.question,
+            answer: "",
+            askedAt: now,
+            answeredAt: "",
+            wasFollowUp: item.wasFollowUp,
+            followUpToQuestionId: item.followUpToQuestionId,
+          })),
+        );
+        setStartedAt(now);
+        setCurrentAnswer("");
+        setCurrentQuestionIndex(0);
+        setIsInterviewCompleted(false);
+        setLatestCoaching(null);
         return;
       }
 
-      const selected = orderedBank.slice(0, count);
-      if (!interviewId && userId) {
-        const interviewMeta = inferInterviewMeta(selected);
-        const created = await createInterviewSession({
+      const activeQuestion = sessionQuestions[currentQuestionIndex];
+      const updated = commitAnswer(answerText, currentQuestionIndex);
+      setQaLog(updated);
+      setCurrentAnswer("");
+      stopListening();
+      let insertedFollowUp = false;
+
+      if (activeQuestion && resolvedInterviewId && userId) {
+        const coaching = await analyzeInterviewAnswer({
+          interviewId: resolvedInterviewId,
           userId,
-          questions: selected,
-          role: interviewMeta.role,
-          type: interviewMeta.type,
-          level: interviewMeta.level,
-          techstack: interviewMeta.techstack,
+          questionId: activeQuestion.id,
+          question: activeQuestion.question,
+          answer: answerText || "(No answer)",
+          roundType: effectiveRoundType,
         });
 
-        if (created.success) {
-          setResolvedInterviewId(created.interviewId);
-        } else {
-          toast.error("Failed to create interview session.");
-          return;
+        setLatestCoaching(coaching);
+
+        if (
+          coaching.shouldAskFollowUp &&
+          coaching.suggestedFollowUpQuestion &&
+          !activeQuestion.wasFollowUp
+        ) {
+          insertedFollowUp = true;
+          const followUpQuestion: InterviewQuestionItem = {
+            id: `${activeQuestion.id}-followup`,
+            question: coaching.suggestedFollowUpQuestion,
+            wasFollowUp: true,
+            followUpToQuestionId: activeQuestion.id,
+          };
+
+          setSessionQuestions((prev) => {
+            if (prev.some((item) => item.id === followUpQuestion.id)) return prev;
+
+            const next = [...prev];
+            next.splice(currentQuestionIndex + 1, 0, followUpQuestion);
+            return next;
+          });
+
+          setQaLog((prev) => {
+            if (prev.some((item) => item.id === followUpQuestion.id)) return prev;
+
+            const next = [...prev];
+            next.splice(currentQuestionIndex + 1, 0, {
+              id: followUpQuestion.id,
+              question: followUpQuestion.question,
+              answer: "",
+              askedAt: new Date().toISOString(),
+              answeredAt: "",
+              wasFollowUp: true,
+              followUpToQuestionId: activeQuestion.id,
+            });
+            return next;
+          });
         }
       }
 
-      setSessionQuestions(selected);
-      setQaLog(selected.map((question) => ({ question, answer: "" })));
-      setCurrentAnswer("");
-      setCurrentQuestionIndex(0);
-      setIsInterviewCompleted(false);
-      return;
-    }
+      const effectiveQuestionCount = sessionQuestions.length + (insertedFollowUp ? 1 : 0);
+      const isLast = currentQuestionIndex >= effectiveQuestionCount - 1;
+      if (isLast) {
+        const completionMessage =
+          "Your interview is completed. You can end your call now to generate your report.";
+        setIsInterviewCompleted(true);
+        setCurrentPrompt(completionMessage);
+        speakText(completionMessage, startListening);
+        return;
+      }
 
-    const updated = commitAnswer(answerText, currentQuestionIndex);
-    setQaLog(updated);
-    setCurrentAnswer("");
-    stopListening();
-
-    const isLast = currentQuestionIndex >= sessionQuestions.length - 1;
-    if (isLast) {
-      const completionMessage =
-        "Your interview is completed. You can end your call now to generate your report.";
-      setIsInterviewCompleted(true);
-      setCurrentPrompt(completionMessage);
-      speakText(completionMessage, startListening);
-      return;
-    }
-
-    setCurrentQuestionIndex((idx) => idx + 1);
-    } finally {
-      isSubmittingRef.current = false;
-    }
-  }, [
-    commitAnswer,
-    currentAnswer,
-    currentQuestionIndex,
-    safeQuestions,
-    sessionQuestions.length,
-    speakText,
-    startListening,
-    stopListening,
-    interviewId,
-    userId,
-  ]);
+      setCurrentQuestionIndex((idx) => idx + 1);
+      } finally {
+        isSubmittingRef.current = false;
+      }
+    }, [
+      buildQuestionItems,
+      commitAnswer,
+      currentAnswer,
+      currentQuestionIndex,
+      effectiveRoundType,
+      interviewId,
+      resolvedInterviewId,
+      safeQuestions,
+      sessionQuestions,
+      speakText,
+      startListening,
+      stopListening,
+      userId,
+    ]);
 
   React.useEffect(() => {
     autoSubmitFromSpeechRef.current = (answer: string) => {
@@ -840,11 +1099,12 @@ const Agent = ({
     }
 
     const question = sessionQuestions[currentQuestionIndex];
+    if (!question) return;
     lastSpokenQuestionIndexRef.current = currentQuestionIndex;
-    setCurrentPrompt(question);
+    setCurrentPrompt(question.question);
     setCurrentAnswer("");
     spokenTextRef.current = "";
-    speakText(question, startListening);
+    speakText(question.question, startListening);
   }, [
     callStatus,
     currentQuestionIndex,
@@ -857,7 +1117,7 @@ const Agent = ({
     if (callStatus !== CallStatus.INACTIVE) return;
 
     stopListening();
-    if (VAPI_ENABLED) {
+    if (HAS_VAPI_TOKEN) {
       void vapi.stop();
     } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -865,11 +1125,13 @@ const Agent = ({
 
     setSessionQuestions([]);
     setQaLog([]);
+    setLatestCoaching(null);
     setCurrentPrompt("");
     setCurrentAnswer("");
     setCurrentQuestionIndex(-1);
     setIsInterviewCompleted(false);
     setResolvedInterviewId(interviewId);
+    setStartedAt(null);
     pendingSpeechRef.current = null;
     lastFinalTranscriptRef.current = null;
     lastSpokenQuestionIndexRef.current = null;
@@ -885,14 +1147,29 @@ const Agent = ({
     if (!voiceAgentReady) return;
 
     if (safeQuestions.length > 0) {
-      setSessionQuestions(safeQuestions);
-      setQaLog(safeQuestions.map((question) => ({ question, answer: "" })));
+      const seededQuestions = buildQuestionItems(safeQuestions);
+      const now = new Date().toISOString();
+
+      setSessionQuestions(seededQuestions);
+      setQaLog(
+        seededQuestions.map((item) => ({
+          id: item.id,
+          question: item.question,
+          answer: "",
+          askedAt: now,
+          answeredAt: "",
+          wasFollowUp: item.wasFollowUp,
+          followUpToQuestionId: item.followUpToQuestionId,
+        })),
+      );
       setCurrentPrompt("");
       setCurrentAnswer("");
       setCurrentQuestionIndex(0);
       setIsInterviewCompleted(false);
+      setStartedAt(now);
+      setLatestCoaching(null);
 
-      const firstQuestion = safeQuestions[0];
+      const firstQuestion = seededQuestions[0]?.question;
       if (firstQuestion) {
         preSpokenQuestionIndexRef.current = 0;
         lastSpokenQuestionIndexRef.current = 0;
@@ -911,6 +1188,7 @@ const Agent = ({
     setCurrentPrompt(countPrompt);
     setCurrentAnswer("");
     setCurrentQuestionIndex(-1);
+    setStartedAt(new Date().toISOString());
     speakText(countPrompt, startListening);
   };
 
@@ -957,6 +1235,9 @@ const Agent = ({
             {isSpeaking && <span className="animate-speak" />}
           </div>
           <h3>Ai Interviewer</h3>
+          <p className="mt-1 text-xs uppercase tracking-[0.2em] text-light-400">
+            {effectiveRoundType.replace("-", " ")} round
+          </p>
         </div>
 
         <div className="card-border">
@@ -1031,6 +1312,34 @@ const Agent = ({
                 )}
               </div>
             )}
+
+            {latestCoaching ? (
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-primary-200/30 px-3 py-1 text-xs text-primary-100">
+                    Answer Coaching
+                  </span>
+                  <span className="text-sm text-light-400">
+                    Overall {latestCoaching.overallScore}/100
+                  </span>
+                </div>
+                <p className="mt-3 text-sm text-white">{latestCoaching.quickTip}</p>
+                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-light-400">Clarity</p>
+                    <p className="mt-1 text-white">{latestCoaching.clarityScore}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-light-400">Relevance</p>
+                    <p className="mt-1 text-white">{latestCoaching.relevanceScore}</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-light-400">Depth</p>
+                    <p className="mt-1 text-white">{latestCoaching.depthScore}</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {!speechSupported && (
               <p className="mt-2 text-sm text-red-300">

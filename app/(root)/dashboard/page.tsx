@@ -5,8 +5,10 @@ import { getCurrentUser } from "@/lib/actions/auth.action";
 import {
   getDashboardStatsByUserId,
   getInterviewsByUserId,
+  getUserGamificationByUserId,
   getLogicArenaStatsByUserId,
   getRecentLogicArenaSessionsByUserId,
+  getWeeklyChallengeTemplate,
 } from "@/lib/actions/general.action";
 import { getDisplayInterviewRole } from "@/lib/utils";
 
@@ -14,12 +16,14 @@ const DashboardPage = async () => {
   const user = await getCurrentUser();
   const userId = user?.id;
 
-  const [stats, interviews, logicArenaStats, logicArenaSessions] = userId
+  const [stats, interviews, logicArenaStats, logicArenaSessions, gamification, weeklyChallenge] = userId
     ? await Promise.all([
         getDashboardStatsByUserId(userId),
         getInterviewsByUserId(userId),
         getLogicArenaStatsByUserId(userId),
         getRecentLogicArenaSessionsByUserId(userId),
+        getUserGamificationByUserId(userId),
+        getWeeklyChallengeTemplate(),
       ])
     : [
         {
@@ -37,6 +41,24 @@ const DashboardPage = async () => {
           favoriteStack: "N/A",
         },
         [],
+        {
+          userId: "",
+          currentStreakDays: 0,
+          longestStreakDays: 0,
+          totalPracticeDays: 0,
+          interviewsCompleted: 0,
+          logicArenaRounds: 0,
+          badgesEarned: [],
+          xp: 0,
+          level: 1,
+          weeklyProgress: {
+            interviewsCompleted: 0,
+            scoreDelta: 0,
+            logicArenaRounds: 0,
+          },
+          lastPracticeAt: null,
+        },
+        null,
       ];
 
   const recentInterviews = interviews?.slice(0, 5) ?? [];
@@ -186,6 +208,92 @@ const DashboardPage = async () => {
               </div>
             </>
           )}
+        </div>
+      </section>
+
+      <section className="card-border w-full">
+        <div className="card p-6">
+          <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <h3 className="text-xl">Practice Momentum</h3>
+              <p className="mt-1 text-sm text-light-400">
+                Streaks, XP, and challenge progress from interviews and Logic Arena.
+              </p>
+            </div>
+            <Button asChild className="btn-secondary w-full sm:w-auto">
+              <Link href="/interview-history">Open History</Link>
+            </Button>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">Current Streak</p>
+              <h3 className="mt-2">{gamification.currentStreakDays} days</h3>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">Longest Streak</p>
+              <h3 className="mt-2">{gamification.longestStreakDays} days</h3>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">XP</p>
+              <h3 className="mt-2">{gamification.xp}</h3>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-sm text-light-400">Level</p>
+              <h3 className="mt-2">{gamification.level}</h3>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <h4 className="text-lg font-semibold text-white">
+                {weeklyChallenge?.name || "Weekly Challenge"}
+              </h4>
+              <div className="mt-4 grid gap-3">
+                {(weeklyChallenge?.goals || []).map((goal) => {
+                  const progress = gamification.weeklyProgress[goal.metric] || 0;
+                  const percentage = Math.min(100, Math.round((progress / goal.target) * 100));
+
+                  return (
+                    <div key={goal.id} className="grid gap-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-light-100">{goal.label}</span>
+                        <span className="text-white">
+                          {progress}/{goal.target}
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-white/10">
+                        <div
+                          className="h-2 rounded-full bg-primary-200"
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <h4 className="text-lg font-semibold text-white">Badges</h4>
+              {gamification.badgesEarned.length === 0 ? (
+                <p className="mt-3 text-sm text-light-400">
+                  Complete interviews and arena rounds to unlock badges.
+                </p>
+              ) : (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {gamification.badgesEarned.map((badge) => (
+                    <span
+                      key={badge}
+                      className="rounded-full border border-primary-200/30 px-3 py-1 text-sm text-primary-100"
+                    >
+                      {badge}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 

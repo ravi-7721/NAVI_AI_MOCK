@@ -19,6 +19,7 @@ const AnalyticsPage = async () => {
         getFeedbackByUserId(userId),
       ])
     : [null, [], []];
+  const safeInterviews = interviews ?? [];
 
   const recentScores = feedback.slice(0, 6).reverse();
   const categoryMap = new Map<string, { total: number; count: number }>();
@@ -41,8 +42,8 @@ const AnalyticsPage = async () => {
     .sort((a, b) => b.score - a.score);
 
   const completionRate =
-    interviews.length > 0
-      ? Math.round((feedback.length / Math.max(interviews.length, 1)) * 100)
+    safeInterviews.length > 0
+      ? Math.round((feedback.length / Math.max(safeInterviews.length, 1)) * 100)
       : 0;
 
   return (

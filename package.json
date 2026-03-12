@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "firebase:bootstrap": "node .\\scripts\\bootstrap-firestore.js",
     "postbuild:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\prepare-desktop.ps1",
     "build:desktop": "npm run build && npm run postbuild:desktop",
     "dist:win": "npm run build:desktop && electron-builder --win nsis",

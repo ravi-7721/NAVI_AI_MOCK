@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { db } from "@/firebase/admin";
 import { feedbackSchema, interviewTemplates } from "@/constants";
+import { runCodingChallengeChecks as executeCodingChallengeChecks } from "@/lib/liveCodingRunner";
 import { getInterviewCoverBySeed } from "@/lib/utils";
 
 const DEFAULT_FEEDBACK_CATEGORIES = [
@@ -17,6 +18,81 @@ const DEFAULT_FEEDBACK_CATEGORIES = [
   "Cultural & Role Fit",
   "Confidence & Clarity",
 ] as const;
+
+const INTERVIEW_MODE_FALLBACKS: InterviewModeDefinition[] = [
+  {
+    id: "hr",
+    name: "HR Round",
+    description:
+      "Behavioral screening focused on communication, motivation, and culture fit.",
+    scoringFocus: [
+      "Communication Skills",
+      "Behavioral Skills",
+      "Confidence & Clarity",
+    ],
+    targetQuestionCount: 8,
+  },
+  {
+    id: "technical",
+    name: "Technical Round",
+    description:
+      "Technical depth, debugging, implementation trade-offs, and problem solving.",
+    scoringFocus: ["Technical Knowledge", "Problem-Solving", "Aptitude"],
+    targetQuestionCount: 10,
+  },
+  {
+    id: "managerial",
+    name: "Managerial Round",
+    description:
+      "Ownership, prioritization, collaboration, and stakeholder communication.",
+    scoringFocus: [
+      "Communication Skills",
+      "Problem-Solving",
+      "Cultural & Role Fit",
+    ],
+    targetQuestionCount: 8,
+  },
+  {
+    id: "full-loop",
+    name: "Full Loop",
+    description:
+      "Combined HR, technical, and managerial stages in one complete interview flow.",
+    scoringFocus: [
+      "Communication Skills",
+      "Technical Knowledge",
+      "Problem-Solving",
+      "Cultural & Role Fit",
+    ],
+    targetQuestionCount: 15,
+  },
+  {
+    id: "live-coding",
+    name: "Live Coding",
+    description:
+      "Solve JavaScript coding problems with starter code, timed checks, and coding-specific feedback.",
+    scoringFocus: ["Technical Knowledge", "Problem-Solving", "Aptitude"],
+    targetQuestionCount: 2,
+  },
+];
+
+const DEFAULT_GAMIFICATION: UserGamification = {
+  userId: "",
+  currentStreakDays: 0,
+  longestStreakDays: 0,
+  totalPracticeDays: 0,
+  interviewsCompleted: 0,
+  logicArenaRounds: 0,
+  badgesEarned: [],
+  xp: 0,
+  level: 1,
+  weeklyChallengeId: "default-template",
+  weeklyProgress: {
+    interviewsCompleted: 0,
+    scoreDelta: 0,
+    logicArenaRounds: 0,
+  },
+  lastPracticeAt: null,
+};
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
@@ -101,6 +177,168 @@ const normalizeFeedbackObject = (object: {
   };
 };
 
+const answerCoachingSchema = z.object({
+  clarityScore: z.number().min(0).max(100),
+  relevanceScore: z.number().min(0).max(100),
+  depthScore: z.number().min(0).max(100),
+  strengths: z.array(z.string().min(1)).min(1).max(3),
+  improvements: z.array(z.string().min(1)).min(1).max(3),
+  quickTip: z.string().min(1),
+  shouldAskFollowUp: z.boolean(),
+  suggestedFollowUpQuestion: z.string().optional(),
+});
+
+const clampQuestionMetric = (value: number) => clampScore(value);
+
+const normalizeRoundType = (value?: string): InterviewRoundType =>
+  value === "hr" ||
+  value === "technical" ||
+  value === "managerial" ||
+  value === "full-loop" ||
+  value === "live-coding"
+    ? value
+    : "technical";
+
+const normalizeCodingLanguage = (value?: string): CodingLanguage =>
+  value === "python" ||
+  value === "java" ||
+  value === "go" ||
+  value === "ruby" ||
+  value === "javascript"
+    ? value
+    : "javascript";
+
+const getLevelFromXp = (xp: number) => Math.max(1, Math.floor(xp / 250) + 1);
+
+const startOfDayKey = (value: string) => value.slice(0, 10);
+
+const buildFallbackCoaching = (params: {
+  question: string;
+  answer: string;
+  roundType: InterviewRoundType;
+}) => {
+  const { question, answer, roundType } = params;
+  const answerLength = answer.trim().length;
+  const wordCount = answer
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  const mentionsNumbers = /\d/.test(answer);
+  const mentionsExample = /(example|project|built|implemented|worked|led|improved)/i.test(
+    answer,
+  );
+  const mentionsComplexity = /(time complexity|space complexity|o\(|set|map|stack|hash)/i.test(
+    answer,
+  );
+  const mentionsQuestionTopic =
+    question.length > 0 &&
+    question
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((token) => token.length > 4)
+      .some((token) => answer.toLowerCase().includes(token));
+
+  const codingPassMatch = answer.match(/passed\s+(\d+)\/(\d+)\s+checks/i);
+  const passedChecks = Number(codingPassMatch?.[1] || 0);
+  const totalChecks = Number(codingPassMatch?.[2] || 0);
+  const passRatio =
+    totalChecks > 0 ? Math.max(0, Math.min(1, passedChecks / totalChecks)) : 0;
+
+  if (roundType === "live-coding") {
+    const clarityScore = clampQuestionMetric(
+      42 + Math.min(wordCount * 2, 18) + (mentionsComplexity ? 8 : 0),
+    );
+    const relevanceScore = clampQuestionMetric(
+      35 + Math.round(passRatio * 45) + (mentionsQuestionTopic ? 10 : 0),
+    );
+    const depthScore = clampQuestionMetric(
+      38 + Math.round(passRatio * 32) + (mentionsComplexity ? 12 : 0),
+    );
+    const overallScore = Math.round((clarityScore + relevanceScore + depthScore) / 3);
+    const shouldAskFollowUp = overallScore < 80;
+
+    return {
+      clarityScore,
+      relevanceScore,
+      depthScore,
+      overallScore,
+      strengths: [
+        totalChecks > 0
+          ? `Passed ${passedChecks}/${totalChecks} provided checks`
+          : "Shared a draft solution",
+      ],
+      improvements: [
+        passRatio < 1
+          ? "Fix the failing checks before optimizing further"
+          : "Explain the trade-off and complexity more explicitly",
+        mentionsComplexity
+          ? "Mention edge cases and boundary conditions more clearly"
+          : "Call out time and space complexity during the explanation",
+      ],
+      quickTip:
+        passRatio < 1
+          ? "Start with correctness: fix the failing checks, then explain complexity and edge cases."
+          : "Strong baseline. Add complexity analysis and boundary-case reasoning to finish the answer well.",
+      shouldAskFollowUp,
+      suggestedFollowUpQuestion: shouldAskFollowUp
+        ? "Which edge cases or complexity trade-offs would you revisit before shipping this solution?"
+        : undefined,
+    };
+  }
+
+  const clarityScore = clampQuestionMetric(45 + Math.min(wordCount * 4, 28));
+  const relevanceScore = clampQuestionMetric(
+    48 + (mentionsQuestionTopic ? 22 : 0) + Math.min(wordCount * 2, 20),
+  );
+  const depthScore = clampQuestionMetric(
+    40 + (mentionsExample ? 18 : 0) + (mentionsNumbers ? 10 : 0) + Math.min(answerLength / 8, 24),
+  );
+  const overallScore = Math.round((clarityScore + relevanceScore + depthScore) / 3);
+  const shouldAskFollowUp = overallScore < 78 || !mentionsExample;
+
+  return {
+    clarityScore,
+    relevanceScore,
+    depthScore,
+    overallScore,
+    strengths: [
+      answerLength > 80 ? "Provided a reasonably complete answer" : "Kept the answer direct",
+    ],
+    improvements: [
+      mentionsExample
+        ? "Add sharper metrics or outcomes to strengthen credibility"
+        : "Add a concrete example to support the answer",
+      roundType === "technical"
+        ? "Explain the trade-off or implementation detail more clearly"
+        : "Structure the answer more clearly from context to result",
+    ],
+    quickTip: mentionsNumbers
+      ? "Tighten the structure so the strongest point lands first."
+      : "Use a brief STAR-style structure and include one measurable outcome.",
+    shouldAskFollowUp,
+    suggestedFollowUpQuestion: shouldAskFollowUp
+      ? roundType === "technical"
+        ? "Can you walk through the implementation choice and the trade-off you made?"
+        : "Can you give one specific example and explain the outcome?"
+      : undefined,
+  };
+};
+
+const normalizeGamification = (
+  userId: string,
+  raw?: Partial<UserGamification> | null,
+): UserGamification => ({
+  ...DEFAULT_GAMIFICATION,
+  ...raw,
+  userId,
+  badgesEarned: Array.isArray(raw?.badgesEarned) ? raw!.badgesEarned.filter(Boolean) : [],
+  weeklyProgress: {
+    interviewsCompleted: Number(raw?.weeklyProgress?.interviewsCompleted || 0),
+    scoreDelta: Number(raw?.weeklyProgress?.scoreDelta || 0),
+    logicArenaRounds: Number(raw?.weeklyProgress?.logicArenaRounds || 0),
+  },
+});
+
 export async function createFeedback(params: CreateFeedbackParams) {
   const { interviewId, userId, transcript, feedbackId } = params;
 
@@ -176,7 +414,11 @@ export async function createFeedback(params: CreateFeedbackParams) {
 
     await feedbackRef.set(feedback);
 
-    return { success: true, feedbackId: feedbackRef.id };
+    return {
+      success: true,
+      feedbackId: feedbackRef.id,
+      totalScore: normalized.totalScore,
+    };
   } catch (error) {
     console.error("Error saving feedback:", error);
     return { success: false, error: "Could not save feedback to database." };
@@ -185,8 +427,48 @@ export async function createFeedback(params: CreateFeedbackParams) {
 
 export async function getInterviewById(id: string): Promise<Interview | null> {
   const interview = await db.collection("interviews").doc(id).get();
+  if (!interview.exists) return null;
 
-  return interview.data() as Interview | null;
+  return {
+    id: interview.id,
+    ...interview.data(),
+  } as Interview;
+}
+
+export async function getInterviewModes(): Promise<InterviewModeDefinition[]> {
+  try {
+    const doc = await db.collection("interviewModes").doc("default").get();
+    const modes = doc.data()?.modes;
+
+    if (!Array.isArray(modes) || modes.length === 0) {
+      return INTERVIEW_MODE_FALLBACKS;
+    }
+
+    const normalizedModes = modes
+      .map((item) => ({
+        id: normalizeRoundType(String(item?.id || "")),
+        name: String(item?.name || ""),
+        description: String(item?.description || ""),
+        scoringFocus: Array.isArray(item?.scoringFocus)
+          ? item.scoringFocus.map((entry: unknown) => String(entry)).filter(Boolean)
+          : [],
+        targetQuestionCount: Number(item?.targetQuestionCount || 8),
+      }))
+      .filter((item) => item.name);
+
+    const mergedById = new Map(
+      INTERVIEW_MODE_FALLBACKS.map((mode) => [mode.id, mode] as const),
+    );
+
+    normalizedModes.forEach((mode) => {
+      mergedById.set(mode.id, mode);
+    });
+
+    return INTERVIEW_MODE_FALLBACKS.map((mode) => mergedById.get(mode.id) || mode);
+  } catch (error) {
+    console.error("Error getting interview modes:", error);
+    return INTERVIEW_MODE_FALLBACKS;
+  }
 }
 
 export async function getFeedbackByInterviewId(
@@ -215,13 +497,16 @@ export async function getFeedbackByUserId(userId: string): Promise<Feedback[]> {
       .get();
 
     return snapshot.docs
-      .map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }))
+      .map(
+        (doc) =>
+          ({
+            id: doc.id,
+            ...doc.data(),
+          }) as Feedback,
+      )
       .sort((a, b) =>
         String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
-      ) as Feedback[];
+      );
   } catch (error) {
     console.error("Error getting feedback by user:", error);
     return [];
@@ -282,6 +567,8 @@ export async function ensureDefaultInterviewsForUser(userId: string) {
       batch.set(docRef, {
         role: template.role,
         type: template.type,
+        roundType:
+          String(template.type).toLowerCase() === "behavioral" ? "hr" : "technical",
         level: template.level,
         techstack: template.techstack,
         questions: template.questions,
@@ -307,6 +594,9 @@ export async function createInterviewSession(params: {
   level?: string;
   type?: string;
   techstack?: string[];
+  roundType?: InterviewRoundType;
+  codingLanguage?: CodingLanguage;
+  codingChallenges?: CodingChallenge[];
 }) {
   const {
     userId,
@@ -315,16 +605,27 @@ export async function createInterviewSession(params: {
     level = "Mid",
     type = "Mixed",
     techstack = ["Communication", "Problem Solving"],
+    roundType = "technical",
+    codingLanguage,
+    codingChallenges,
   } = params;
 
   try {
     const createdAt = new Date().toISOString();
+    const normalizedRoundType = normalizeRoundType(roundType);
     const interview = {
       role,
       type,
+      roundType: normalizedRoundType,
       level,
       techstack,
       questions,
+      ...(normalizedRoundType === "live-coding"
+        ? { codingLanguage: normalizeCodingLanguage(codingLanguage) }
+        : {}),
+      codingChallengeIds: Array.isArray(codingChallenges)
+        ? codingChallenges.map((challenge) => challenge.id).filter(Boolean)
+        : [],
       userId,
       finalized: true,
       createdAt,
@@ -336,6 +637,299 @@ export async function createInterviewSession(params: {
   } catch (error) {
     console.error("Error creating interview session:", error);
     return { success: false as const };
+  }
+}
+
+export async function runLiveCodingChecks(params: {
+  challenge: CodingChallenge;
+  language: CodingLanguage;
+  code: string;
+  explanation: string;
+}) {
+  return executeCodingChallengeChecks({
+    challenge: params.challenge,
+    language: normalizeCodingLanguage(params.language),
+    code: params.code,
+    explanation: params.explanation,
+  });
+}
+
+export async function analyzeInterviewAnswer(params: {
+  interviewId: string;
+  userId: string;
+  questionId: string;
+  question: string;
+  answer: string;
+  roundType?: InterviewRoundType;
+}): Promise<AnswerCoaching> {
+  const { interviewId, userId, questionId, question, answer } = params;
+  const roundType = normalizeRoundType(params.roundType);
+  const updatedAt = new Date().toISOString();
+
+  let coaching = buildFallbackCoaching({
+    question,
+    answer,
+    roundType,
+  });
+
+  try {
+    const { object } = await generateObject({
+      model: google("gemini-2.0-flash-001"),
+      schema: answerCoachingSchema,
+      prompt: `
+You are evaluating a single mock interview answer.
+
+Interview round: ${roundType}
+Question:
+${question}
+
+Candidate answer:
+${answer}
+
+Return compact coaching only. Score clarity, relevance, and depth from 0 to 100.
+If the answer is weak, vague, or incomplete, set shouldAskFollowUp to true and propose one sharp follow-up question.
+`,
+      system:
+        "You are a strict interview coach. Return concise, high-signal structured coaching only.",
+    });
+
+    coaching = {
+      clarityScore: clampQuestionMetric(object.clarityScore),
+      relevanceScore: clampQuestionMetric(object.relevanceScore),
+      depthScore: clampQuestionMetric(object.depthScore),
+      overallScore: clampQuestionMetric(
+        (Number(object.clarityScore) +
+          Number(object.relevanceScore) +
+          Number(object.depthScore)) /
+          3,
+      ),
+      strengths: object.strengths.filter(Boolean).slice(0, 3),
+      improvements: object.improvements.filter(Boolean).slice(0, 3),
+      quickTip: object.quickTip.trim(),
+      shouldAskFollowUp: object.shouldAskFollowUp,
+      suggestedFollowUpQuestion: object.suggestedFollowUpQuestion?.trim(),
+    };
+  } catch (error) {
+    console.error("Error analyzing interview answer, using fallback:", error);
+  }
+
+  const coachingDoc: AnswerCoaching = {
+    id: `${interviewId}_${questionId}`,
+    interviewId,
+    userId,
+    questionId,
+    question,
+    answer,
+    roundType,
+    ...coaching,
+    updatedAt,
+  };
+
+  try {
+    await db.collection("answerCoaching").doc(coachingDoc.id).set(coachingDoc, {
+      merge: true,
+    });
+  } catch (error) {
+    console.error("Error saving answer coaching:", error);
+  }
+
+  return coachingDoc;
+}
+
+export async function getInterviewReplayByInterviewId(params: {
+  interviewId: string;
+  userId: string;
+}): Promise<InterviewReplay | null> {
+  try {
+    const doc = await db.collection("interviewReplays").doc(params.interviewId).get();
+    if (!doc.exists) return null;
+
+    const data = doc.data() as InterviewReplay;
+    if (data.userId !== params.userId) return null;
+
+    return {
+      ...data,
+      id: doc.id,
+    };
+  } catch (error) {
+    console.error("Error getting interview replay:", error);
+    return null;
+  }
+}
+
+export async function getAnswerCoachingForInterview(params: {
+  interviewId: string;
+  userId: string;
+}): Promise<AnswerCoaching[]> {
+  try {
+    const snapshot = await db
+      .collection("answerCoaching")
+      .where("interviewId", "==", params.interviewId)
+      .where("userId", "==", params.userId)
+      .get();
+
+    return snapshot.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }) as AnswerCoaching)
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  } catch (error) {
+    console.error("Error getting answer coaching:", error);
+    return [];
+  }
+}
+
+export async function getWeeklyChallengeTemplate(): Promise<WeeklyChallenge | null> {
+  try {
+    const doc = await db.collection("weeklyChallenges").doc("default-template").get();
+    if (!doc.exists) return null;
+
+    return {
+      id: doc.id,
+      ...doc.data(),
+    } as WeeklyChallenge;
+  } catch (error) {
+    console.error("Error getting weekly challenge template:", error);
+    return null;
+  }
+}
+
+export async function getUserGamificationByUserId(
+  userId: string,
+): Promise<UserGamification> {
+  try {
+    const doc = await db.collection("userGamification").doc(userId).get();
+    return normalizeGamification(userId, doc.exists ? (doc.data() as UserGamification) : null);
+  } catch (error) {
+    console.error("Error getting user gamification:", error);
+    return normalizeGamification(userId);
+  }
+}
+
+const syncUserGamificationBadges = (gamification: UserGamification) => {
+  const earned = new Set(gamification.badgesEarned);
+
+  if (gamification.interviewsCompleted >= 1) earned.add("first-interview");
+  if (gamification.currentStreakDays >= 7) earned.add("streak-7");
+  if (gamification.logicArenaRounds >= 1) earned.add("logic-initiate");
+
+  const weeklyGoalMet =
+    gamification.weeklyProgress.interviewsCompleted >= 3 &&
+    gamification.weeklyProgress.logicArenaRounds >= 2 &&
+    gamification.weeklyProgress.scoreDelta >= 5;
+  if (weeklyGoalMet) earned.add("weekly-warrior");
+
+  return [...earned];
+};
+
+export async function recordInterviewCompletion(params: {
+  interviewId: string;
+  userId: string;
+  roundType: InterviewRoundType;
+  startedAt: string;
+  completedAt: string;
+  qaLog: ReplayQuestionEntry[];
+  totalScore?: number;
+}) {
+  const { interviewId, userId, roundType, startedAt, completedAt, qaLog } = params;
+
+  try {
+    await db.collection("interviewReplays").doc(interviewId).set(
+      {
+        interviewId,
+        userId,
+        roundType,
+        startedAt,
+        completedAt,
+        qaLog,
+      },
+      { merge: true },
+    );
+  } catch (error) {
+    console.error("Error saving interview replay:", error);
+  }
+
+  try {
+    const gamification = await getUserGamificationByUserId(userId);
+    const completedDay = startOfDayKey(completedAt);
+    const previousPracticeDay = gamification.lastPracticeAt
+      ? startOfDayKey(gamification.lastPracticeAt)
+      : null;
+
+    const todayDate = new Date(completedDay);
+    const previousDate = previousPracticeDay ? new Date(previousPracticeDay) : null;
+    const dayDiff =
+      previousDate !== null
+        ? Math.round((todayDate.getTime() - previousDate.getTime()) / 86_400_000)
+        : null;
+
+    const practicedTodayAlready = previousPracticeDay === completedDay;
+    const nextStreak = practicedTodayAlready
+      ? gamification.currentStreakDays
+      : dayDiff === 1
+        ? gamification.currentStreakDays + 1
+        : 1;
+
+    const nextInterviews = gamification.interviewsCompleted + 1;
+    const nextXp = gamification.xp + 120 + qaLog.length * 5;
+    const nextScoreDelta = Number(params.totalScore || 0) - Math.max(0, Number(gamification.weeklyProgress.scoreDelta || 0));
+
+    const updatedGamification: UserGamification = {
+      ...gamification,
+      userId,
+      currentStreakDays: nextStreak,
+      longestStreakDays: Math.max(gamification.longestStreakDays, nextStreak),
+      totalPracticeDays: practicedTodayAlready
+        ? gamification.totalPracticeDays
+        : gamification.totalPracticeDays + 1,
+      interviewsCompleted: nextInterviews,
+      xp: nextXp,
+      level: getLevelFromXp(nextXp),
+      weeklyProgress: {
+        ...gamification.weeklyProgress,
+        interviewsCompleted: gamification.weeklyProgress.interviewsCompleted + 1,
+        scoreDelta: Math.max(gamification.weeklyProgress.scoreDelta, nextScoreDelta),
+      },
+      lastPracticeAt: completedAt,
+      badgesEarned: [],
+    };
+
+    updatedGamification.badgesEarned = syncUserGamificationBadges(updatedGamification);
+
+    await db.collection("userGamification").doc(userId).set(updatedGamification, {
+      merge: true,
+    });
+  } catch (error) {
+    console.error("Error updating interview gamification:", error);
+  }
+}
+
+export async function recordLogicArenaCompletion(params: {
+  userId: string;
+  completedAt?: string;
+}) {
+  const completedAt = params.completedAt || new Date().toISOString();
+
+  try {
+    const gamification = await getUserGamificationByUserId(params.userId);
+    const updatedGamification: UserGamification = {
+      ...gamification,
+      logicArenaRounds: gamification.logicArenaRounds + 1,
+      xp: gamification.xp + 45,
+      level: getLevelFromXp(gamification.xp + 45),
+      weeklyProgress: {
+        ...gamification.weeklyProgress,
+        logicArenaRounds: gamification.weeklyProgress.logicArenaRounds + 1,
+      },
+      lastPracticeAt: completedAt,
+      badgesEarned: [],
+    };
+
+    updatedGamification.badgesEarned = syncUserGamificationBadges(updatedGamification);
+
+    await db.collection("userGamification").doc(params.userId).set(updatedGamification, {
+      merge: true,
+    });
+  } catch (error) {
+    console.error("Error updating Logic Arena gamification:", error);
   }
 }
 
@@ -822,6 +1416,7 @@ Rules:
       level: finalLevel,
       type: finalType,
       techstack: finalTechstack,
+      roundType: finalType === "Behavioral" ? "hr" : "technical",
     });
 
     if (!created.success) {

@@ -21,8 +21,9 @@ const NotificationsPage = async () => {
         getFeedbackByUserId(userId),
       ])
     : [null, null, [], []];
+  const safeInterviews = interviews ?? [];
 
-  const latestInterview = interviews[0];
+  const latestInterview = safeInterviews[0];
   const latestFeedback = feedback[0];
   const previousFeedback = feedback[1];
 

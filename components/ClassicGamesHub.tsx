@@ -133,6 +133,30 @@ const evaluateWordleGuess = (guess: string, target: string) => {
   return result;
 };
 
+const getWordleKeyStatus = (
+  letter: string,
+  guesses: string[],
+  evaluatedGuesses: Array<Array<"correct" | "present" | "miss">>,
+): "correct" | "present" | "miss" | "unused" => {
+  let status: "correct" | "present" | "miss" | "unused" = "unused";
+
+  for (let guessIndex = 0; guessIndex < evaluatedGuesses.length; guessIndex += 1) {
+    const guess = guesses[guessIndex] || "";
+    const states = evaluatedGuesses[guessIndex];
+
+    for (let charIndex = 0; charIndex < guess.length; charIndex += 1) {
+      if (guess[charIndex] !== letter) continue;
+
+      const nextState = states[charIndex];
+      if (nextState === "correct") return "correct";
+      if (nextState === "present") status = "present";
+      else if (status === "unused") status = "miss";
+    }
+  }
+
+  return status;
+};
+
 const getSudokuConflictMap = (grid: number[][]) =>
   grid.map((row, rowIndex) =>
     row.map((cell, colIndex) => {
@@ -615,16 +639,7 @@ const WordleGame = () => {
 
         <div className="mt-5 flex flex-wrap gap-2">
           {"QWERTYUIOPASDFGHJKLZXCVBNM".split("").map((letter) => {
-            let status: "correct" | "present" | "miss" | "unused" = "unused";
-            evaluatedGuesses.forEach((states, guessIndex) => {
-              guesses[guessIndex]?.split("").forEach((char, charIndex) => {
-                if (char !== letter) return;
-                const nextState = states[charIndex];
-                if (nextState === "correct") status = "correct";
-                else if (nextState === "present" && status !== "correct") status = "present";
-                else if (status === "unused") status = "miss";
-              });
-            });
+            const status = getWordleKeyStatus(letter, guesses, evaluatedGuesses);
 
             const keyClass =
               status === "correct"
@@ -650,7 +665,7 @@ const WordleGame = () => {
 };
 
 const CrosswordGame = () => {
-  const [grid, setGrid] = React.useState(
+  const [grid, setGrid] = React.useState<string[][]>(
     CROSSWORD_TEMPLATE.map((row) => row.map((cell) => (cell === "#" ? "#" : ""))),
   );
 

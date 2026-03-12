@@ -5,14 +5,13 @@ import { defineConfig } from "eslint/config";
 
 export default defineConfig([
   {
-    ignores: [".next/**", "node_modules/**", "dist/**", "build/**"],
+    ignores: [".next/**", "node_modules/**", "dist/**", "build/**", "release/**"],
   },
   {
     files: ["**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
     plugins: { js },
     extends: ["js/recommended"],
   },
-  { files: ["**/*.js"], languageOptions: { sourceType: "commonjs" } },
   tseslint.configs.recommended,
   pluginReact.configs.flat.recommended,
   {
@@ -23,6 +22,24 @@ export default defineConfig([
     },
     rules: {
       "react/react-in-jsx-scope": "off",
+    },
+  },
+  {
+    files: ["**/*.{js,cjs}"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: {
+        require: "readonly",
+        module: "readonly",
+        process: "readonly",
+        console: "readonly",
+        fetch: "readonly",
+        setTimeout: "readonly",
+        __dirname: "readonly",
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
     },
   },
 ]);

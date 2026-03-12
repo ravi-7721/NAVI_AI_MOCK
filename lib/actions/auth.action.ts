@@ -22,7 +22,7 @@ const normalizeHobbies = (value: unknown): string[] => {
     .slice(0, 10);
 };
 
-const isUploadFileLike = (value: FormDataEntryValue | null): value is File => {
+const isUploadFileLike = (value: FormDataEntryValue | null | undefined): value is File => {
   if (!value || typeof value === "string") return false;
 
   const file = value as Partial<File>;
@@ -255,7 +255,7 @@ export async function updateUserProfile(
     const nextProfileUrl =
       isUploadFileLike(profile.profileImage) && profile.profileImage.size > 0
         ? await fileToDataUrl(profile.profileImage)
-        : (profile.profileURL || "").trim();
+        : String(profile.profileURL || "").trim();
 
     await db.collection("users").doc(userId).set(
       {

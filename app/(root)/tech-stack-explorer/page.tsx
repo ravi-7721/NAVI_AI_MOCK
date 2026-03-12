@@ -7,7 +7,7 @@ import { getInterviewsByUserId } from "@/lib/actions/general.action";
 
 const TechStackExplorerPage = async () => {
   const user = await getCurrentUser();
-  const interviews = user?.id ? await getInterviewsByUserId(user.id) : [];
+  const interviews = (user?.id ? await getInterviewsByUserId(user.id) : []) ?? [];
 
   const techMap = new Map<
     string,
