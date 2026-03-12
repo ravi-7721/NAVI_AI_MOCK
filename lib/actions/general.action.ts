@@ -66,6 +66,19 @@ const INTERVIEW_MODE_FALLBACKS: InterviewModeDefinition[] = [
     targetQuestionCount: 15,
   },
   {
+    id: "video",
+    name: "Video Interview",
+    description:
+      "Camera-on screening practice focused on concise delivery, presence, and communication.",
+    scoringFocus: [
+      "Communication Skills",
+      "Behavioral Skills",
+      "Confidence & Clarity",
+      "Cultural & Role Fit",
+    ],
+    targetQuestionCount: 6,
+  },
+  {
     id: "live-coding",
     name: "Live Coding",
     description:
@@ -195,6 +208,7 @@ const normalizeRoundType = (value?: string): InterviewRoundType =>
   value === "technical" ||
   value === "managerial" ||
   value === "full-loop" ||
+  value === "video" ||
   value === "live-coding"
     ? value
     : "technical";
@@ -310,11 +324,16 @@ const buildFallbackCoaching = (params: {
         : "Add a concrete example to support the answer",
       roundType === "technical"
         ? "Explain the trade-off or implementation detail more clearly"
+        : roundType === "video"
+          ? "Keep the answer concise and structured for a live video screening"
         : "Structure the answer more clearly from context to result",
     ],
-    quickTip: mentionsNumbers
-      ? "Tighten the structure so the strongest point lands first."
-      : "Use a brief STAR-style structure and include one measurable outcome.",
+    quickTip:
+      roundType === "video"
+        ? "Keep eye contact with the camera, answer in short structured blocks, and finish with the outcome."
+        : mentionsNumbers
+          ? "Tighten the structure so the strongest point lands first."
+          : "Use a brief STAR-style structure and include one measurable outcome.",
     shouldAskFollowUp,
     suggestedFollowUpQuestion: shouldAskFollowUp
       ? roundType === "technical"

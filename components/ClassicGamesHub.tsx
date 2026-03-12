@@ -1,13 +1,24 @@
 "use client";
 
 import * as React from "react";
-import { BookOpen, Grid3X3, Maximize2, Minimize2, RefreshCcw, Swords, Type } from "lucide-react";
+import { BookOpen, Bot, Grid3X3, Maximize2, Minimize2, RefreshCcw, Swords, Type, Users } from "lucide-react";
 
 type ClassicGameId = "sudoku" | "wordle" | "crossword" | "chess";
 
 type ChessPiece = {
   type: "p" | "r" | "n" | "b" | "q" | "k";
   color: "w" | "b";
+};
+
+type ChessMode = "local" | "ai";
+
+type ChessMove = {
+  fromRow: number;
+  fromCol: number;
+  toRow: number;
+  toCol: number;
+  piece: ChessPiece;
+  captured: ChessPiece | null;
 };
 
 const GAME_CARDS: Array<{
@@ -255,6 +266,15 @@ const initialPieceCounts: Record<ChessPiece["color"], Record<ChessPiece["type"],
   b: { p: 8, r: 2, n: 2, b: 2, q: 1, k: 1 },
 };
 
+const chessPieceValues: Record<ChessPiece["type"], number> = {
+  p: 100,
+  n: 320,
+  b: 330,
+  r: 500,
+  q: 900,
+  k: 20000,
+};
+
 const isInsideBoard = (row: number, col: number) =>
   row >= 0 && row < 8 && col >= 0 && col < 8;
 
@@ -443,6 +463,75 @@ const getCapturedPieceSymbols = (
   return order.flatMap((type) =>
     Array.from({ length: remaining[type] }, () => pieceSymbols[type][capturedColor]),
   );
+};
+
+const getAllLegalChessMoves = (
+  board: Array<Array<ChessPiece | null>>,
+  turn: "w" | "b",
+): ChessMove[] => {
+  const moves: ChessMove[] = [];
+
+  for (let row = 0; row < 8; row += 1) {
+    for (let col = 0; col < 8; col += 1) {
+      const piece = board[row][col];
+      if (!piece || piece.color !== turn) continue;
+
+      const legalMoves = getLegalMoves(board, row, col, turn);
+      legalMoves.forEach(([toRow, toCol]) => {
+        moves.push({
+          fromRow: row,
+          fromCol: col,
+          toRow,
+          toCol,
+          piece,
+          captured: board[toRow][toCol],
+        });
+      });
+    }
+  }
+
+  return moves;
+};
+
+const scoreChessMove = (
+  board: Array<Array<ChessPiece | null>>,
+  move: ChessMove,
+  turn: "w" | "b",
+) => {
+  const opponent = turn === "w" ? "b" : "w";
+  const nextBoard = applyChessMove(board, move.fromRow, move.fromCol, move.toRow, move.toCol);
+  const capturedValue = move.captured ? chessPieceValues[move.captured.type] : 0;
+  const tradeRisk = Math.floor(chessPieceValues[move.piece.type] / 8);
+  const promotionBonus =
+    move.piece.type === "p" && (move.toRow === 0 || move.toRow === 7) ? 700 : 0;
+  const checkBonus = isKingInCheck(nextBoard, opponent) ? 150 : 0;
+  const centerBonus = 24 - (Math.abs(3.5 - move.toRow) + Math.abs(3.5 - move.toCol)) * 6;
+  const mobilityBonus = Math.max(0, 14 - getAllLegalChessMoves(nextBoard, opponent).length) * 4;
+
+  return capturedValue + promotionBonus + checkBonus + centerBonus + mobilityBonus - tradeRisk;
+};
+
+const pickAiChessMove = (
+  board: Array<Array<ChessPiece | null>>,
+  turn: "w" | "b",
+): ChessMove | null => {
+  const legalMoves = getAllLegalChessMoves(board, turn);
+  if (legalMoves.length === 0) return null;
+
+  let bestMove = legalMoves[0];
+  let bestScore = scoreChessMove(board, legalMoves[0], turn);
+
+  for (let index = 1; index < legalMoves.length; index += 1) {
+    const nextMove = legalMoves[index];
+    const nextScore = scoreChessMove(board, nextMove, turn);
+
+    if (nextScore > bestScore) {
+      bestMove = nextMove;
+      bestScore = nextScore;
+    }
+  }
+
+  return bestMove;
 };
 
 const SudokuGame = () => {
@@ -767,12 +856,15 @@ const CrosswordGame = () => {
 };
 
 const ChessGame = () => {
+  const [gameMode, setGameMode] = React.useState<ChessMode>("local");
   const [board, setBoard] = React.useState(createChessBoard);
   const [turn, setTurn] = React.useState<"w" | "b">("w");
   const [selected, setSelected] = React.useState<[number, number] | null>(null);
-  const [message, setMessage] = React.useState("White to move.");
+  const [message, setMessage] = React.useState("White to move. Local board ready.");
   const [isFullscreen, setIsFullscreen] = React.useState(false);
   const [winner, setWinner] = React.useState<"White" | "Black" | null>(null);
+  const [draw, setDraw] = React.useState(false);
+  const [isAiThinking, setIsAiThinking] = React.useState(false);
 
   const legalMoves = React.useMemo(() => {
     if (!selected) return [];
@@ -784,18 +876,78 @@ const ChessGame = () => {
   const blackKing = React.useMemo(() => findKing(board, "b"), [board]);
   const whiteInCheck = React.useMemo(() => isKingInCheck(board, "w"), [board]);
   const blackInCheck = React.useMemo(() => isKingInCheck(board, "b"), [board]);
+  const isAiTurn = gameMode === "ai" && turn === "b" && !winner && !draw;
+  const turnLabel = turn === "w" ? "White" : "Black";
+  const modeLabel = gameMode === "ai" ? "Play vs AI" : "2 Players (Local)";
 
-  const reset = () => {
+  const startNewMatch = (nextMode: ChessMode) => {
+    setGameMode(nextMode);
     setBoard(createChessBoard());
     setTurn("w");
     setSelected(null);
-    setMessage("White to move.");
+    setMessage(
+      nextMode === "ai"
+        ? "White to move. AI robot controls black."
+        : "White to move. Local board ready.",
+    );
     setIsFullscreen(false);
     setWinner(null);
+    setDraw(false);
+    setIsAiThinking(false);
   };
 
+  const reset = () => {
+    startNewMatch(gameMode);
+  };
+
+  const commitMove = React.useCallback(
+    (fromRow: number, fromCol: number, toRow: number, toCol: number) => {
+      const movingPiece = board[fromRow][fromCol];
+      if (!movingPiece) return;
+
+      const nextBoard = applyChessMove(board, fromRow, fromCol, toRow, toCol);
+      const nextTurn = turn === "w" ? "b" : "w";
+      const nextTurnLabel = nextTurn === "w" ? "White" : "Black";
+      const opponentChecked = isKingInCheck(nextBoard, nextTurn);
+      const opponentHasMove = hasAnyLegalMove(nextBoard, nextTurn);
+      const isCheckmate = opponentChecked && !opponentHasMove;
+      const isStalemate = !opponentChecked && !opponentHasMove;
+      const winnerName = turn === "w" ? "White" : "Black";
+
+      setBoard(nextBoard);
+      setSelected(null);
+      setIsAiThinking(false);
+
+      if (isCheckmate) {
+        setWinner(winnerName);
+        setDraw(false);
+        setMessage(`Checkmate. ${winnerName} wins.`);
+        return;
+      }
+
+      if (isStalemate) {
+        setWinner(null);
+        setDraw(true);
+        setMessage("Stalemate. Draw.");
+        return;
+      }
+
+      setTurn(nextTurn);
+      setDraw(false);
+      setMessage(
+        opponentChecked ? `${nextTurnLabel} is in check.` : `${nextTurnLabel} to move.`,
+      );
+    },
+    [board, turn],
+  );
+
   const handleSquareClick = (row: number, col: number) => {
-    if (winner) return;
+    if (winner || draw) return;
+    if (isAiTurn) {
+      setMessage("AI robot is thinking...");
+      return;
+    }
+    if (isAiThinking) return;
 
     const piece = board[row][col];
 
@@ -828,31 +980,35 @@ const ChessGame = () => {
       return;
     }
 
-    const movingPiece = board[fromRow][fromCol];
-    if (!movingPiece) return;
+    commitMove(fromRow, fromCol, row, col);
+  };
 
-    const nextBoard = applyChessMove(board, fromRow, fromCol, row, col);
-    const nextTurn = turn === "w" ? "b" : "w";
-    const opponentChecked = isKingInCheck(nextBoard, nextTurn);
-    const opponentHasMove = hasAnyLegalMove(nextBoard, nextTurn);
-    const isCheckmate = opponentChecked && !opponentHasMove;
-    const winnerName = turn === "w" ? "White" : "Black";
+  React.useEffect(() => {
+    if (!isAiTurn) return;
 
-    setBoard(nextBoard);
-    setSelected(null);
-    if (isCheckmate) {
-      setWinner(winnerName);
-      setMessage(`Checkmate. ${winnerName} wins.`);
+    const aiMove = pickAiChessMove(board, "b");
+    if (!aiMove) {
+      if (blackInCheck) {
+        setWinner("White");
+        setDraw(false);
+        setMessage("Checkmate. White wins.");
+      } else {
+        setWinner(null);
+        setDraw(true);
+        setMessage("Stalemate. Draw.");
+      }
       return;
     }
 
-    setTurn(nextTurn);
-    setMessage(
-      opponentChecked
-        ? `${nextTurn === "w" ? "White" : "Black"} is in check.`
-        : `${nextTurn === "w" ? "White" : "Black"} to move.`,
-    );
-  };
+    setIsAiThinking(true);
+    setMessage("AI robot is thinking...");
+
+    const timeoutId = window.setTimeout(() => {
+      commitMove(aiMove.fromRow, aiMove.fromCol, aiMove.toRow, aiMove.toCol);
+    }, 550);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [blackInCheck, board, commitMove, isAiTurn]);
 
   const boardContent = (
     <>
@@ -860,8 +1016,34 @@ const ChessGame = () => {
         <div>
           <h3 className="text-xl text-white">Chess Trainer</h3>
           <p className="mt-1 text-sm text-light-400">
-            Responsive local board with legal move highlights and king safety.
+            Offline board with local two-player mode and a lightweight AI robot.
           </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => startNewMatch("local")}
+              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition ${
+                gameMode === "local"
+                  ? "border-primary-200/40 bg-primary-200/12 text-white shadow-[0_0_24px_rgba(202,197,254,0.16)]"
+                  : "border-white/12 bg-white/6 text-light-100 hover:bg-white/10"
+              }`}
+            >
+              <Users className="size-4" />
+              2 Players (Local)
+            </button>
+            <button
+              type="button"
+              onClick={() => startNewMatch("ai")}
+              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition ${
+                gameMode === "ai"
+                  ? "border-primary-200/40 bg-primary-200/12 text-white shadow-[0_0_24px_rgba(202,197,254,0.16)]"
+                  : "border-white/12 bg-white/6 text-light-100 hover:bg-white/10"
+              }`}
+            >
+              <Bot className="size-4" />
+              Play vs AI
+            </button>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -888,9 +1070,11 @@ const ChessGame = () => {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
             <div className="flex items-center gap-3">
               <span className="rounded-full border border-primary-200/30 bg-primary-200/12 px-3 py-1 text-sm font-semibold text-primary-100">
-                {winner ? `${winner} won` : `${turn === "w" ? "White" : "Black"} to move`}
+                {draw ? "Draw" : winner ? `${winner} won` : isAiTurn ? "AI robot thinking" : `${turnLabel} to move`}
               </span>
-              <span className="text-sm text-light-400">Tap a piece to see legal moves.</span>
+              <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-sm text-light-200">
+                {modeLabel}
+              </span>
             </div>
             <span className="text-sm text-light-100">{message}</span>
           </div>
@@ -899,6 +1083,11 @@ const ChessGame = () => {
             <div className="mb-4 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3">
               <p className="text-base font-semibold text-white">Checkmate</p>
               <p className="mt-1 text-sm text-light-100">{winner} wins the game.</p>
+            </div>
+          ) : draw ? (
+            <div className="mb-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3">
+              <p className="text-base font-semibold text-white">Draw</p>
+              <p className="mt-1 text-sm text-light-100">No legal moves remain. Start a new match to play again.</p>
             </div>
           ) : null}
 
@@ -1001,12 +1190,18 @@ const ChessGame = () => {
           <div className="mt-4 grid gap-3">
             <div className="rounded-2xl border border-white/8 bg-black/15 p-4">
               <p className="text-sm text-light-400">Status</p>
-              <p className="mt-1 text-white">{winner ? "Finished" : "In Progress"}</p>
+              <p className="mt-1 text-white">
+                {winner || draw ? "Finished" : isAiThinking ? "AI is thinking" : "In Progress"}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-black/15 p-4">
+              <p className="text-sm text-light-400">Mode</p>
+              <p className="mt-1 text-white">{modeLabel}</p>
             </div>
             <div className="rounded-2xl border border-white/8 bg-black/15 p-4">
               <p className="text-sm text-light-400">Turn</p>
               <p className="mt-1 text-white">
-                {winner ? `${winner} won` : `${turn === "w" ? "White" : "Black"} to move`}
+                {draw ? "Drawn board" : winner ? `${winner} won` : `${turnLabel} to move`}
               </p>
             </div>
             <div className="rounded-2xl border border-white/8 bg-black/15 p-4">

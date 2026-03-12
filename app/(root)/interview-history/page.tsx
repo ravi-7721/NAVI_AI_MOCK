@@ -21,6 +21,87 @@ const InterviewHistoryPage = async () => {
   const feedbackByInterviewId = new Map(
     feedback.map((item) => [item.interviewId, item.totalScore]),
   );
+  const videoInterviews = (interviews ?? []).filter(
+    (interview) => interview.roundType === "video",
+  );
+  const standardInterviews = (interviews ?? []).filter(
+    (interview) => interview.roundType !== "video",
+  );
+
+  const renderInterviewSection = (
+    title: string,
+    description: string,
+    items: Interview[],
+  ) => {
+    if (items.length === 0) return null;
+
+    return (
+      <section className="grid gap-4">
+        <div className="flex flex-col gap-2">
+          <h3>{title}</h3>
+          <p className="text-sm text-light-400">{description}</p>
+        </div>
+
+        {items.map((interview) => (
+          <div key={interview.id} className="card-border w-full">
+            <div className="card flex flex-col gap-5 p-6">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-sm text-light-400">
+                    {dayjs(interview.createdAt).format("MMM D, YYYY h:mm A")}
+                  </p>
+                  <h3 className="mt-2 text-xl">
+                    {getDisplayInterviewRole(
+                      interview.role,
+                      interview.techstack,
+                      interview.id,
+                    )}
+                  </h3>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-white/15 px-3 py-1 text-xs text-light-100">
+                      {interview.type}
+                    </span>
+                    <span className="rounded-full border border-white/15 px-3 py-1 text-xs text-light-100">
+                      {interview.level}
+                    </span>
+                    <span className="rounded-full border border-white/15 px-3 py-1 text-xs text-light-100">
+                      {interview.roundType === "video"
+                        ? "Video Interview"
+                        : String(interview.roundType || "general")
+                            .replace(/-/g, " ")
+                            .replace(/\b\w/g, (char) => char.toUpperCase())}
+                    </span>
+                    <span className="rounded-full border border-primary-200/30 px-3 py-1 text-xs text-primary-200">
+                      Score: {feedbackByInterviewId.get(interview.id) ?? "--"}/100
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <Button asChild className="btn-secondary">
+                    <Link href={`/interview/${interview.id}`}>Resume</Link>
+                  </Button>
+                  <Button asChild className="btn-secondary">
+                    <Link href={`/interview/${interview.id}/replay`}>Replay</Link>
+                  </Button>
+                  <Button asChild className="btn-primary">
+                    <Link href={`/interview/${interview.id}/feedback`}>Feedback</Link>
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-sm text-light-400">Questions Asked</p>
+                <p className="mt-2 text-white">{interview.questions?.length ?? 0}</p>
+              </div>
+
+              <DisplayTechIcons techStack={interview.techstack || []} />
+            </div>
+          </div>
+        ))}
+      </section>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-8">
@@ -42,66 +123,28 @@ const InterviewHistoryPage = async () => {
         </div>
       </section>
 
-      <section className="grid gap-4">
-        {interviews?.length ? (
-          interviews.map((interview) => (
-            <div key={interview.id} className="card-border w-full">
-              <div className="card flex flex-col gap-5 p-6">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <p className="text-sm text-light-400">
-                      {dayjs(interview.createdAt).format("MMM D, YYYY h:mm A")}
-                    </p>
-                    <h3 className="mt-2 text-xl">
-                      {getDisplayInterviewRole(
-                        interview.role,
-                        interview.techstack,
-                        interview.id,
-                      )}
-                    </h3>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-white/15 px-3 py-1 text-xs text-light-100">
-                        {interview.type}
-                      </span>
-                      <span className="rounded-full border border-white/15 px-3 py-1 text-xs text-light-100">
-                        {interview.level}
-                      </span>
-                      <span className="rounded-full border border-primary-200/30 px-3 py-1 text-xs text-primary-200">
-                        Score: {feedbackByInterviewId.get(interview.id) ?? "--"}/100
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    <Button asChild className="btn-secondary">
-                      <Link href={`/interview/${interview.id}`}>Resume</Link>
-                    </Button>
-                    <Button asChild className="btn-secondary">
-                      <Link href={`/interview/${interview.id}/replay`}>Replay</Link>
-                    </Button>
-                    <Button asChild className="btn-primary">
-                      <Link href={`/interview/${interview.id}/feedback`}>Feedback</Link>
-                    </Button>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-sm text-light-400">Questions Asked</p>
-                  <p className="mt-2 text-white">{interview.questions?.length ?? 0}</p>
-                </div>
-
-                <DisplayTechIcons techStack={interview.techstack || []} />
-              </div>
-            </div>
-          ))
-        ) : (
+      {interviews?.length ? (
+        <div className="flex flex-col gap-8">
+          {renderInterviewSection(
+            "Video Interviews",
+            "Completed and saved camera-on screenings appear here.",
+            videoInterviews,
+          )}
+          {renderInterviewSection(
+            "Practice Interviews",
+            "All saved HR, technical, managerial, and other practice rounds.",
+            standardInterviews,
+          )}
+        </div>
+      ) : (
+        <section className="grid gap-4">
           <div className="card-border w-full">
             <div className="card p-6">
               <p>No interview history yet. Start your first session to populate this page.</p>
             </div>
           </div>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   );
 };

@@ -19,7 +19,7 @@ const Layout = async ({ children }: { children: ReactNode }) => {
 
   return (
     <div className="root-layout">
-      <nav className="fixed left-1/2 top-4 z-40 w-[calc(100%-2rem)] max-w-7xl -translate-x-1/2 sm:w-[calc(100%-3rem)] lg:w-[calc(100%-6rem)] xl:w-[calc(100%-8rem)]">
+      <nav className="w-full">
         <div className="flex flex-col gap-4">
           <Link href="/" className="flex min-w-0 items-center gap-2">
             <Image src="/logo.svg" alt="MockMate Logo" width={38} height={32} />

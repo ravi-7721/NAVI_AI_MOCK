@@ -26,6 +26,40 @@ const Page = async () => {
     interviews = await getInterviewsByUserId(user.id);
   }
 
+  const videoInterviews = (interviews ?? []).filter(
+    (interview) => interview.roundType === "video",
+  );
+  const standardInterviews = (interviews ?? []).filter(
+    (interview) => interview.roundType !== "video",
+  );
+
+  const renderInterviewSection = (
+    title: string,
+    description: string,
+    items: Interview[],
+  ) => {
+    if (items.length === 0) return null;
+
+    return (
+      <section className="flex flex-col gap-6">
+        <div className="flex flex-col gap-2">
+          <h2>{title}</h2>
+          <p className="text-sm text-light-400">{description}</p>
+        </div>
+
+        <div className="interviews-section">
+          {items.map((interview) => (
+            <InterviewCard
+              interviewId={interview.id}
+              {...interview}
+              key={interview.id}
+            />
+          ))}
+        </div>
+      </section>
+    );
+  };
+
   return (
     <>
       <section className="card-cta">
@@ -52,19 +86,19 @@ const Page = async () => {
       </section>
 
       {interviews && interviews.length > 0 && (
-        <section className="flex flex-col gap-6 mt-8">
-          <h2>Your Interviews</h2>
+        <div className="mt-8 flex flex-col gap-8">
+          {renderInterviewSection(
+            "Video Interviews",
+            "Camera-on interview sessions with dedicated video screening practice.",
+            videoInterviews,
+          )}
 
-          <div className="interviews-section">
-            {interviews.map((interview) => (
-              <InterviewCard
-                interviewId={interview.id}
-                {...interview}
-                key={interview.id}
-              />
-            ))}
-          </div>
-        </section>
+          {renderInterviewSection(
+            "Your Interviews",
+            "All of your saved practice sessions across HR, technical, and mixed rounds.",
+            standardInterviews,
+          )}
+        </div>
       )}
 
       <footer className="mt-12 border-t border-white/10 pt-6 pb-2">

@@ -1,6 +1,7 @@
-import { Controller, Control, FieldValues, Path } from "react-hook-form";
+import { Control, FieldValues, Path } from "react-hook-form";
 
 import {
+  FormField as UiFormField,
   FormItem,
   FormLabel,
   FormControl,
@@ -24,7 +25,7 @@ const FormField = <T extends FieldValues>({
   type = "text",
 }: FormFieldProps<T>) => {
   return (
-    <Controller
+    <UiFormField
       control={control}
       name={name}
       render={({ field }) => (

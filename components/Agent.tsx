@@ -3,6 +3,14 @@
 import React from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import {
+  CameraOff,
+  LoaderCircle,
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+} from "lucide-react";
 import { toast } from "sonner";
 import type { CreateAssistantDTO } from "@vapi-ai/web/dist/api";
 
@@ -28,7 +36,7 @@ type BrowserSpeechRecognition = {
   continuous: boolean;
   maxAlternatives: number;
   onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
@@ -54,9 +62,15 @@ type SpeechRecognitionEvent = {
   results: SpeechRecognitionResultListLike;
 };
 
+type SpeechRecognitionErrorEvent = {
+  error?: string;
+  message?: string;
+};
+
 const INTRO_QUESTION = "Tell me about yourself and your background.";
-const SILENCE_TIMEOUT_MS = 1700;
-const HAS_VAPI_TOKEN = Boolean(process.env.NEXT_PUBLIC_VAPI_WEB_TOKEN);
+const SILENCE_TIMEOUT_MS = 2600;
+const LISTENING_RESUME_DELAY_MS = 120;
+const HAS_VAPI_TOKEN = Boolean(vapi);
 
 const VOICE_AGENT: CreateAssistantDTO = {
   name: "Interviewer",
@@ -172,9 +186,29 @@ const ROUND_QUESTION_BANKS: Record<InterviewRoundType, readonly string[]> = {
     "How do you respond to feedback from a manager or teammate?",
     "How do you measure whether your work created business value?",
   ],
+  video: [
+    "Give me your introduction.",
+    "Why does this role fit your background right now?",
+    "Describe a project you can explain clearly to a non-technical hiring manager.",
+    "Tell me about a time you handled ambiguity and communicated clearly under pressure.",
+    "How do you keep remote or distributed collaboration effective?",
+    "Tell me about a result you delivered and how you communicated the impact.",
+    "Describe a time you had to influence someone without direct authority.",
+    "How do you answer confidently when you do not know something immediately?",
+  ],
   "live-coding": [
     "This round uses the dedicated live coding workspace instead of the voice interview flow.",
   ],
+};
+
+const VIDEO_INTERVIEW_META: Pick<
+  Interview,
+  "role" | "type" | "level" | "techstack"
+> = {
+  role: "Video Interview Practice",
+  type: "Video",
+  level: "Mid",
+  techstack: ["Communication", "Confidence", "Storytelling"],
 };
 
 const orderQuestionBank = (questions: readonly string[]) => {
@@ -355,6 +389,40 @@ const getVoiceFallbackSupport = () => {
   return Boolean(getRecognitionCtor() || window.speechSynthesis);
 };
 
+const FEMALE_VOICE_HINTS = [
+  "neha",
+  "zira",
+  "samantha",
+  "hazel",
+  "jenny",
+  "aria",
+  "ava",
+  "sara",
+  "susan",
+  "female",
+] as const;
+
+const pickPreferredFemaleVoice = (voices: SpeechSynthesisVoice[]) => {
+  if (!voices.length) return null;
+
+  const matchesHint = (voice: SpeechSynthesisVoice) => {
+    const normalizedName = voice.name.toLowerCase();
+    return FEMALE_VOICE_HINTS.some((hint) => normalizedName.includes(hint));
+  };
+
+  const englishVoices = voices.filter((voice) =>
+    /^en([-_]|$)/i.test(voice.lang || ""),
+  );
+
+  return (
+    englishVoices.find(matchesHint) ||
+    voices.find(matchesHint) ||
+    englishVoices[0] ||
+    voices[0] ||
+    null
+  );
+};
+
 const getVapiErrorMeta = (error: unknown) => {
   if (typeof error === "string") {
     return { type: "", message: error };
@@ -403,6 +471,17 @@ const isRecoverableVapiDisconnect = (error: unknown) => {
   );
 };
 
+const shouldSilenceVapiError = (error: unknown) => {
+  const { type, message } = getVapiErrorMeta(error);
+  const combined = `${type} ${message}`.toLowerCase();
+
+  return (
+    isRecoverableVapiDisconnect(error) ||
+    combined.includes("meeting ended due to ejection") ||
+    combined.includes("meeting has ended")
+  );
+};
+
 const isValidInterviewAnswer = (answer: string, question: string) => {
   const normalizedAnswer = normalizeSpeech(answer);
   const normalizedQuestion = normalizeSpeech(question);
@@ -439,8 +518,12 @@ const Agent = ({
   const router = useRouter();
   const safeQuestions = React.useMemo(() => questions ?? [], [questions]);
   const effectiveRoundType = roundType;
+  const isVideoInterview = effectiveRoundType === "video";
+  const roundLabel = isVideoInterview
+    ? "video interview"
+    : `${effectiveRoundType.replace("-", " ")} round`;
   const [voiceProvider, setVoiceProvider] = React.useState<"vapi" | "browser">(
-    HAS_VAPI_TOKEN ? "vapi" : "browser",
+    !isVideoInterview && HAS_VAPI_TOKEN ? "vapi" : "browser",
   );
 
   const [callStatus, setCallStatus] = React.useState<CallStatus>(
@@ -454,14 +537,25 @@ const Agent = ({
   const [latestCoaching, setLatestCoaching] = React.useState<AnswerCoaching | null>(null);
   const [isListening, setIsListening] = React.useState(false);
   const [speechSupported, setSpeechSupported] = React.useState(true);
+  const [micError, setMicError] = React.useState<string | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = React.useState(false);
   const [isInterviewCompleted, setIsInterviewCompleted] = React.useState(false);
   const [assistantSpeaking, setAssistantSpeaking] = React.useState(false);
+  const [isUserMicEnabled, setIsUserMicEnabled] = React.useState(true);
+  const [isCameraEnabled, setIsCameraEnabled] = React.useState(false);
+  const [isPreparingCamera, setIsPreparingCamera] = React.useState(false);
+  const [cameraError, setCameraError] = React.useState<string | null>(null);
+  const [answerInputMode, setAnswerInputMode] = React.useState<"voice" | "typing">(
+    "voice",
+  );
   const [resolvedInterviewId, setResolvedInterviewId] = React.useState<
     string | undefined
   >(interviewId);
   const [startedAt, setStartedAt] = React.useState<string | null>(null);
 
+  const videoPreviewRef = React.useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = React.useRef<MediaStream | null>(null);
+  const preferredSpeechVoiceRef = React.useRef<SpeechSynthesisVoice | null>(null);
   const recognitionRef = React.useRef<BrowserSpeechRecognition | null>(null);
   const spokenTextRef = React.useRef("");
   const isSubmittingRef = React.useRef(false);
@@ -476,7 +570,7 @@ const Agent = ({
   const currentQuestionIndexRef = React.useRef(-1);
   const currentPromptRef = React.useRef("");
   const voiceProviderRef = React.useRef<"vapi" | "browser">(
-    HAS_VAPI_TOKEN ? "vapi" : "browser",
+    !isVideoInterview && HAS_VAPI_TOKEN ? "vapi" : "browser",
   );
   const pendingSpeechRef = React.useRef<string | null>(null);
   const lastFinalTranscriptRef = React.useRef<{
@@ -484,7 +578,88 @@ const Agent = ({
     transcript: string;
   } | null>(null);
   const lastSpokenQuestionIndexRef = React.useRef<number | null>(null);
+  const micPermissionGrantedRef = React.useRef(false);
+  const answerInputFocusedRef = React.useRef(false);
+  const manualInputModeRef = React.useRef(false);
   const isSpeaking = assistantSpeaking;
+  const isUserMicOn = isUserMicEnabled;
+  const isUserVideoOn = isCameraEnabled;
+  const isAiMicOn =
+    isSpeaking ||
+    callStatus === CallStatus.ACTIVE ||
+    callStatus === CallStatus.CONNECTING;
+
+  const updateCallStatus = React.useCallback((nextStatus: CallStatus) => {
+    callStatusRef.current = nextStatus;
+    setCallStatus(nextStatus);
+  }, []);
+
+  const resetAnswerInputMode = React.useCallback(() => {
+    answerInputFocusedRef.current = false;
+    manualInputModeRef.current = false;
+    setAnswerInputMode("voice");
+  }, []);
+
+  const resumeListening = React.useCallback(() => {
+    if (
+      answerInputFocusedRef.current ||
+      manualInputModeRef.current ||
+      callStatusRef.current !== CallStatus.ACTIVE ||
+      isGeneratingReport ||
+      isInterviewCompleted ||
+      (isVideoInterview && !isUserMicEnabled)
+    ) {
+      return;
+    }
+
+    startListeningRef.current();
+  }, [isGeneratingReport, isInterviewCompleted, isUserMicEnabled, isVideoInterview]);
+
+  const renderStatusBadge = (
+    active: boolean,
+    ActiveIcon: React.ComponentType<{ className?: string }>,
+    InactiveIcon: React.ComponentType<{ className?: string }>,
+    label: string,
+    options?: {
+      onClick?: () => void;
+      interactive?: boolean;
+    },
+  ) => {
+    const Icon = active ? ActiveIcon : InactiveIcon;
+    const isInteractive = Boolean(options?.interactive && options?.onClick);
+
+    const className = cn(
+      "video-status-badge",
+      active ? "video-status-badge--active" : "video-status-badge--inactive",
+      isInteractive && "video-status-badge--interactive",
+    );
+
+    if (isInteractive) {
+      return (
+        <button
+          type="button"
+          onClick={options?.onClick}
+          className={className}
+          aria-label={`${label} ${active ? "on" : "off"}`}
+          title={`${label} ${active ? "on" : "off"}`}
+        >
+          <Icon className="size-4" />
+        </button>
+      );
+    }
+
+    return (
+      <span
+        className={cn(
+          className,
+        )}
+        aria-label={`${label} ${active ? "on" : "off"}`}
+        title={`${label} ${active ? "on" : "off"}`}
+      >
+        <Icon className="size-4" />
+      </span>
+    );
+  };
 
   const setVoiceProviderMode = React.useCallback((nextMode: "vapi" | "browser") => {
     voiceProviderRef.current = nextMode;
@@ -498,6 +673,32 @@ const Agent = ({
   }, [voiceProvider]);
 
   React.useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+    const syncPreferredVoice = () => {
+      preferredSpeechVoiceRef.current = pickPreferredFemaleVoice(
+        window.speechSynthesis.getVoices(),
+      );
+    };
+
+    syncPreferredVoice();
+    window.speechSynthesis.addEventListener("voiceschanged", syncPreferredVoice);
+
+    return () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", syncPreferredVoice);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const preferredProvider =
+      !isVideoInterview && HAS_VAPI_TOKEN ? "vapi" : "browser";
+
+    if (voiceProviderRef.current !== preferredProvider) {
+      setVoiceProviderMode(preferredProvider);
+    }
+  }, [isVideoInterview, setVoiceProviderMode]);
+
+  React.useEffect(() => {
     callStatusRef.current = callStatus;
   }, [callStatus]);
 
@@ -508,6 +709,142 @@ const Agent = ({
   React.useEffect(() => {
     currentPromptRef.current = currentPrompt;
   }, [currentPrompt]);
+
+  const ensureMicrophonePermission = React.useCallback(async () => {
+    if (micPermissionGrantedRef.current) return true;
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      const message = "This browser does not support microphone access.";
+      setMicError(message);
+      setSpeechSupported(false);
+      toast.error(message);
+      return false;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      });
+      stream.getTracks().forEach((track) => track.stop());
+      micPermissionGrantedRef.current = true;
+      setMicError(null);
+      setSpeechSupported(Boolean(getRecognitionCtor()));
+      return true;
+    } catch (error) {
+      console.error(error);
+      const message =
+        "Microphone access is required for video interview input. Please allow microphone permission.";
+      micPermissionGrantedRef.current = false;
+      setMicError(message);
+      toast.error(message);
+      return false;
+    }
+  }, []);
+
+  const releaseCameraStream = React.useCallback(() => {
+    const stream = cameraStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+
+    if (videoPreviewRef.current) {
+      videoPreviewRef.current.srcObject = null;
+    }
+  }, []);
+
+  const stopCameraStream = React.useCallback(() => {
+    releaseCameraStream();
+    setIsCameraEnabled(false);
+    setIsPreparingCamera(false);
+  }, [releaseCameraStream]);
+
+  const attachCameraStream = React.useCallback((stream: MediaStream) => {
+    const preview = videoPreviewRef.current;
+    if (!preview) return;
+
+    preview.srcObject = stream;
+    const playPromise = preview.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  }, []);
+
+  const ensureCameraReady = React.useCallback(async () => {
+    if (!isVideoInterview) return true;
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      const message = "This browser does not support camera access.";
+      setCameraError(message);
+      toast.error(message);
+      return false;
+    }
+
+    const existingStream = cameraStreamRef.current;
+    if (existingStream) {
+      const hasLiveTrack = existingStream
+        .getVideoTracks()
+        .some((track) => track.readyState === "live");
+
+      if (hasLiveTrack) {
+        setCameraError(null);
+        setIsCameraEnabled(true);
+        attachCameraStream(existingStream);
+        return true;
+      }
+
+      releaseCameraStream();
+    }
+
+    setIsPreparingCamera(true);
+    setCameraError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      cameraStreamRef.current = stream;
+      setIsCameraEnabled(true);
+      return true;
+    } catch (error) {
+      console.error(error);
+      const message = "Camera access is required for video interview mode.";
+      setCameraError(message);
+      toast.error(message);
+      return false;
+    } finally {
+      setIsPreparingCamera(false);
+    }
+  }, [attachCameraStream, isVideoInterview, releaseCameraStream]);
+
+  const handleCameraToggle = React.useCallback(async () => {
+    if (isCameraEnabled) {
+      stopCameraStream();
+      setCameraError(null);
+      return;
+    }
+
+    await ensureCameraReady();
+  }, [ensureCameraReady, isCameraEnabled, stopCameraStream]);
+
+  React.useEffect(() => {
+    if (!isVideoInterview || !isCameraEnabled || !cameraStreamRef.current) return;
+
+    attachCameraStream(cameraStreamRef.current);
+  }, [attachCameraStream, isCameraEnabled, isVideoInterview]);
+
+  React.useEffect(() => {
+    return () => {
+      releaseCameraStream();
+    };
+  }, [releaseCameraStream]);
 
   const clearSilenceTimer = React.useCallback(() => {
     if (silenceTimerRef.current) {
@@ -535,6 +872,11 @@ const Agent = ({
 
   const speakText = React.useCallback((text: string, onDone: () => void) => {
     if (voiceProviderRef.current === "vapi") {
+      if (!vapi) {
+        window.setTimeout(onDone, 50);
+        return;
+      }
+
       if (callStatusRef.current !== CallStatus.ACTIVE) {
         pendingSpeechRef.current = text;
         window.setTimeout(onDone, 50);
@@ -545,7 +887,9 @@ const Agent = ({
         pendingSpeechRef.current = null;
         vapi.say(text);
       } catch (error) {
-        console.error(error);
+        if (!shouldSilenceVapiError(error)) {
+          console.error(error);
+        }
       }
 
       window.setTimeout(onDone, 50);
@@ -553,19 +897,49 @@ const Agent = ({
     }
 
     if (typeof window === "undefined" || !window.speechSynthesis) {
+      setAssistantSpeaking(false);
       onDone();
       return;
     }
 
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
+    const preferredVoice =
+      preferredSpeechVoiceRef.current ||
+      pickPreferredFemaleVoice(window.speechSynthesis.getVoices());
+
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+      utterance.lang = preferredVoice.lang || "en-US";
+    } else {
+      utterance.lang = "en-US";
+    }
+
     utterance.rate = 0.95;
-    utterance.onend = onDone;
-    utterance.onerror = onDone;
+    utterance.pitch = 1.08;
+    setAssistantSpeaking(true);
+    utterance.onend = () => {
+      setAssistantSpeaking(false);
+      onDone();
+    };
+    utterance.onerror = () => {
+      setAssistantSpeaking(false);
+      onDone();
+    };
     window.speechSynthesis.speak(utterance);
   }, []);
 
   const startListening = React.useCallback(() => {
+    if (isVideoInterview && !isUserMicEnabled) {
+      setIsListening(false);
+      return;
+    }
+
+    if (answerInputFocusedRef.current || manualInputModeRef.current) {
+      setIsListening(false);
+      return;
+    }
+
     if (voiceProviderRef.current === "vapi") {
       setIsListening(true);
       return;
@@ -577,101 +951,165 @@ const Agent = ({
       return;
     }
 
-    stopListening();
-    manualStopRef.current = false;
-    shouldAutoSubmitOnEndRef.current = false;
-    clearSilenceTimer();
-
-    const recognition = new Ctor();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = true;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let transcript = "";
-      for (let i = 0; i < event.results.length; i += 1) {
-        transcript += `${event.results[i][0].transcript} `;
-      }
-      const finalText = transcript.replace(/\s+/g, " ").trim();
-      spokenTextRef.current = finalText;
-      setCurrentAnswer(finalText);
-
+    const beginRecognition = () => {
+      stopListening();
+      manualStopRef.current = false;
+      shouldAutoSubmitOnEndRef.current = false;
       clearSilenceTimer();
-      silenceTimerRef.current = setTimeout(() => {
-        shouldAutoSubmitOnEndRef.current = true;
-        recognition.stop();
-      }, SILENCE_TIMEOUT_MS);
-    };
+      setMicError(null);
 
-    recognition.onerror = () => {
-      setIsListening(false);
-    };
+      const recognition = new Ctor();
+      recognition.lang = "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = true;
+      recognition.maxAlternatives = 1;
 
-    recognition.onend = () => {
-      setIsListening(false);
-      recognitionRef.current = null;
-      clearSilenceTimer();
-      const finalSpoken = (spokenTextRef.current || "").trim();
-      setCurrentAnswer((prev) => (finalSpoken || prev || "").trim());
-      if (manualStopRef.current) {
-        manualStopRef.current = false;
-        return;
-      }
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        let transcript = "";
+        for (let i = 0; i < event.results.length; i += 1) {
+          transcript += `${event.results[i][0].transcript} `;
+        }
+        const finalText = transcript.replace(/\s+/g, " ").trim();
 
-      if (shouldAutoSubmitOnEndRef.current && finalSpoken) {
-        shouldAutoSubmitOnEndRef.current = false;
-
-        // In question-answer mode, only submit if this looks like a real answer.
-        if (
-          currentQuestionIndexRef.current >= 0 &&
-          !isValidInterviewAnswer(finalSpoken, currentPromptRef.current)
-        ) {
-          spokenTextRef.current = "";
-          setCurrentAnswer("");
-          if (callStatus === CallStatus.ACTIVE && !isGeneratingReport && !isInterviewCompleted) {
-            setTimeout(() => {
-              startListeningRef.current();
-            }, 150);
-          }
+        if (answerInputFocusedRef.current || manualInputModeRef.current) {
+          spokenTextRef.current = finalText;
           return;
         }
 
-        autoSubmitFromSpeechRef.current(finalSpoken);
-        return;
-      }
+        spokenTextRef.current = finalText;
+        setAnswerInputMode("voice");
+        setCurrentAnswer(finalText);
 
-      if (callStatus === CallStatus.ACTIVE && !isGeneratingReport && !isInterviewCompleted) {
-        setTimeout(() => {
-          startListeningRef.current();
-        }, 150);
+        clearSilenceTimer();
+        silenceTimerRef.current = setTimeout(() => {
+          shouldAutoSubmitOnEndRef.current = true;
+          recognition.stop();
+        }, SILENCE_TIMEOUT_MS);
+      };
+
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        const code = event?.error || "";
+        if (code === "aborted") {
+          setIsListening(false);
+          return;
+        }
+        if (code === "not-allowed" || code === "service-not-allowed") {
+          micPermissionGrantedRef.current = false;
+          setMicError("Microphone permission is blocked. Allow it in Chrome and try again.");
+          toast.error("Microphone permission is blocked. Allow it in Chrome and try again.");
+        } else if (code === "audio-capture") {
+          setMicError("No microphone was detected for speech input.");
+          toast.error("No microphone was detected for speech input.");
+        }
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        recognitionRef.current = null;
+        clearSilenceTimer();
+        const finalSpoken = (spokenTextRef.current || "").trim();
+        if (manualStopRef.current) {
+          manualStopRef.current = false;
+          return;
+        }
+
+        setCurrentAnswer((prev) => (finalSpoken || prev || "").trim());
+
+        if (shouldAutoSubmitOnEndRef.current && finalSpoken) {
+          shouldAutoSubmitOnEndRef.current = false;
+
+          if (
+            currentQuestionIndexRef.current >= 0 &&
+            !isValidInterviewAnswer(finalSpoken, currentPromptRef.current)
+          ) {
+            spokenTextRef.current = "";
+            setCurrentAnswer("");
+            if (
+              callStatus === CallStatus.ACTIVE &&
+              !isGeneratingReport &&
+              !isInterviewCompleted &&
+              !answerInputFocusedRef.current &&
+              !manualInputModeRef.current
+            ) {
+              setTimeout(() => {
+                startListeningRef.current();
+              }, LISTENING_RESUME_DELAY_MS);
+            }
+            return;
+          }
+
+          autoSubmitFromSpeechRef.current(finalSpoken);
+          return;
+        }
+
+        if (
+          callStatus === CallStatus.ACTIVE &&
+          !isGeneratingReport &&
+          !isInterviewCompleted &&
+          !answerInputFocusedRef.current &&
+          !manualInputModeRef.current
+        ) {
+          setTimeout(() => {
+            startListeningRef.current();
+          }, LISTENING_RESUME_DELAY_MS);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      setIsListening(true);
+
+      try {
+        recognition.start();
+      } catch (error) {
+        console.error(error);
+        setIsListening(false);
+        toast.error("Could not start microphone input. Please try again.");
       }
     };
 
-    recognitionRef.current = recognition;
-    setIsListening(true);
-    recognition.start();
+    if (isVideoInterview && !micPermissionGrantedRef.current) {
+      void ensureMicrophonePermission().then((granted) => {
+        if (!granted) {
+          setIsListening(false);
+          return;
+        }
+        beginRecognition();
+      });
+      return;
+    }
+
+    beginRecognition();
   }, [
     callStatus,
     clearSilenceTimer,
-    currentPrompt,
-    currentQuestionIndex,
+    ensureMicrophonePermission,
     isGeneratingReport,
     isInterviewCompleted,
+    isUserMicEnabled,
+    isVideoInterview,
     stopListening,
   ]);
 
   React.useEffect(() => {
-    if (!HAS_VAPI_TOKEN) return;
+    if (!vapi) return;
+
+    const client = vapi;
 
     const handleCallStart = () => {
-      setCallStatus(CallStatus.ACTIVE);
+      updateCallStatus(CallStatus.ACTIVE);
       setIsListening(true);
 
       if (pendingSpeechRef.current) {
         const queuedPrompt = pendingSpeechRef.current;
         pendingSpeechRef.current = null;
-        vapi.say(queuedPrompt);
+        try {
+          client.say(queuedPrompt);
+        } catch (error) {
+          if (!shouldSilenceVapiError(error)) {
+            console.error(error);
+          }
+        }
       }
     };
 
@@ -724,6 +1162,10 @@ const Agent = ({
     const handleError = (error: unknown) => {
       const { message: errorMessage } = getVapiErrorMeta(error);
 
+      if (voiceProviderRef.current !== "vapi" && shouldSilenceVapiError(error)) {
+        return;
+      }
+
       if (
         voiceProviderRef.current === "vapi" &&
         isRecoverableVapiDisconnect(error) &&
@@ -734,10 +1176,10 @@ const Agent = ({
         setIsListening(false);
         setAssistantSpeaking(false);
         pendingSpeechRef.current = null;
-        void vapi.stop().catch(() => {});
+        void client.stop().catch(() => {});
 
         if (callStatusRef.current === CallStatus.CONNECTING) {
-          setCallStatus(CallStatus.ACTIVE);
+          updateCallStatus(CallStatus.ACTIVE);
         }
 
         toast.error("Voice connection dropped. Switched to local voice mode.");
@@ -745,7 +1187,7 @@ const Agent = ({
       }
 
       toast.error(`Voice agent failed: ${errorMessage}`);
-      setCallStatus(CallStatus.INACTIVE);
+      updateCallStatus(CallStatus.INACTIVE);
       setIsListening(false);
       setAssistantSpeaking(false);
     };
@@ -756,37 +1198,42 @@ const Agent = ({
     }) => {
       const stage = event?.stage ? `${event.stage}: ` : "";
       toast.error(`Voice start failed. ${stage}${event?.error || "Unknown error"}`);
-      setCallStatus(CallStatus.INACTIVE);
+      updateCallStatus(CallStatus.INACTIVE);
       setIsListening(false);
       setAssistantSpeaking(false);
     };
 
-    vapi.on("call-start", handleCallStart);
-    vapi.on("call-end", handleCallEnd);
-    vapi.on("speech-start", handleSpeechStart);
-    vapi.on("speech-end", handleSpeechEnd);
-    vapi.on("message", handleMessage);
-    vapi.on("error", handleError);
-    vapi.on("call-start-failed", handleCallStartFailed);
+    client.on("call-start", handleCallStart);
+    client.on("call-end", handleCallEnd);
+    client.on("speech-start", handleSpeechStart);
+    client.on("speech-end", handleSpeechEnd);
+    client.on("message", handleMessage);
+    client.on("error", handleError);
+    client.on("call-start-failed", handleCallStartFailed);
 
     return () => {
-      vapi.removeListener("call-start", handleCallStart);
-      vapi.removeListener("call-end", handleCallEnd);
-      vapi.removeListener("speech-start", handleSpeechStart);
-      vapi.removeListener("speech-end", handleSpeechEnd);
-      vapi.removeListener("message", handleMessage);
-      vapi.removeListener("error", handleError);
-      vapi.removeListener("call-start-failed", handleCallStartFailed);
-      void vapi.stop();
+      client.removeListener("call-start", handleCallStart);
+      client.removeListener("call-end", handleCallEnd);
+      client.removeListener("speech-start", handleSpeechStart);
+      client.removeListener("speech-end", handleSpeechEnd);
+      client.removeListener("message", handleMessage);
+      client.removeListener("error", handleError);
+      client.removeListener("call-start-failed", handleCallStartFailed);
+      void client.stop().catch(() => {});
     };
-  }, [setVoiceProviderMode]);
+  }, [setVoiceProviderMode, updateCallStatus]);
 
   React.useEffect(() => {
     startListeningRef.current = startListening;
   }, [startListening]);
 
   const startVoiceAgentCall = React.useCallback(async () => {
-    if (!HAS_VAPI_TOKEN || voiceProviderRef.current !== "vapi") return true;
+    if (!vapi || voiceProviderRef.current !== "vapi") {
+      if (callStatusRef.current === CallStatus.CONNECTING) {
+        updateCallStatus(CallStatus.ACTIVE);
+      }
+      return true;
+    }
 
     try {
       const webCall = await vapi.start(VOICE_AGENT);
@@ -808,10 +1255,10 @@ const Agent = ({
 
       const { message } = getVapiErrorMeta(error);
       toast.error(`Could not start the voice agent. ${message}`);
-      setCallStatus(CallStatus.INACTIVE);
+      updateCallStatus(CallStatus.INACTIVE);
       return false;
     }
-  }, [setVoiceProviderMode]);
+  }, [setVoiceProviderMode, updateCallStatus]);
 
   const buildQuestionItems = React.useCallback((items: string[]) => {
     return items.map((question, index) => ({
@@ -845,7 +1292,7 @@ const Agent = ({
       try {
         const idToUse = resolvedInterviewId;
         if (!idToUse || !userId) {
-          setCallStatus(CallStatus.FINISHED);
+          updateCallStatus(CallStatus.FINISHED);
           toast.error("Missing interview session details for report generation.");
           return;
         }
@@ -866,7 +1313,7 @@ const Agent = ({
 
         if (!result.success) {
           toast.error(result.error || "Failed to generate report. Please try again.");
-          setCallStatus(CallStatus.FINISHED);
+          updateCallStatus(CallStatus.FINISHED);
           return;
         }
 
@@ -880,35 +1327,121 @@ const Agent = ({
           totalScore: result.totalScore,
         });
 
-        setCallStatus(CallStatus.FINISHED);
+        updateCallStatus(CallStatus.FINISHED);
         router.push(`/interview/${idToUse}/feedback`);
         router.refresh();
       } catch (error) {
         console.error(error);
         toast.error("Failed to generate report. Please try again.");
-        setCallStatus(CallStatus.FINISHED);
+        updateCallStatus(CallStatus.FINISHED);
       } finally {
         setIsGeneratingReport(false);
       }
     },
-    [effectiveRoundType, feedbackId, resolvedInterviewId, router, startedAt, userId],
+    [
+      effectiveRoundType,
+      feedbackId,
+      resolvedInterviewId,
+      router,
+      startedAt,
+      updateCallStatus,
+      userId,
+    ],
   );
 
   const handleListenAgain = React.useCallback(() => {
+    resetAnswerInputMode();
+
     if (!currentPrompt) {
-      startListening();
+      resumeListening();
       return;
     }
 
-    speakText(currentPrompt, startListening);
-  }, [currentPrompt, speakText, startListening]);
+    speakText(currentPrompt, resumeListening);
+  }, [currentPrompt, resetAnswerInputMode, resumeListening, speakText]);
+
+  const handleAnswerInputFocus = React.useCallback(() => {
+    answerInputFocusedRef.current = true;
+    manualInputModeRef.current = true;
+    setAnswerInputMode("typing");
+    stopListening();
+  }, [stopListening]);
+
+  const handleAnswerInputBlur = React.useCallback(() => {
+    answerInputFocusedRef.current = false;
+
+    if (!currentAnswer.trim()) {
+      manualInputModeRef.current = false;
+      setAnswerInputMode("voice");
+
+      if (callStatusRef.current === CallStatus.ACTIVE) {
+        window.setTimeout(() => {
+          resumeListening();
+        }, LISTENING_RESUME_DELAY_MS);
+      }
+    }
+  }, [currentAnswer, resumeListening]);
+
+  const handleAnswerInputChange = React.useCallback((value: string) => {
+    manualInputModeRef.current = true;
+    setAnswerInputMode("typing");
+    spokenTextRef.current = value;
+    setCurrentAnswer(value);
+  }, []);
+
+  const handleVoiceCaptureToggle = React.useCallback(() => {
+    if (isListening) {
+      manualInputModeRef.current = true;
+      setAnswerInputMode("typing");
+      stopListening();
+      return;
+    }
+
+    manualInputModeRef.current = false;
+    answerInputFocusedRef.current = false;
+    setAnswerInputMode("voice");
+    window.setTimeout(() => {
+      resumeListening();
+    }, 40);
+  }, [isListening, resumeListening, stopListening]);
+
+  const handleMicToggle = React.useCallback(() => {
+    if (isUserMicEnabled) {
+      setIsUserMicEnabled(false);
+      stopListening();
+      return;
+    }
+
+    setIsUserMicEnabled(true);
+
+    if (
+      callStatusRef.current === CallStatus.ACTIVE &&
+      !isGeneratingReport &&
+      !isInterviewCompleted &&
+      !assistantSpeaking
+    ) {
+      window.setTimeout(() => {
+        startListeningRef.current();
+      }, LISTENING_RESUME_DELAY_MS);
+    }
+  }, [assistantSpeaking, isGeneratingReport, isInterviewCompleted, isUserMicEnabled, stopListening]);
 
   const endInterviewAndGenerateReport = React.useCallback(async () => {
     stopListening();
-    if (voiceProviderRef.current === "vapi") {
-      await vapi.stop();
+    if (isVideoInterview) {
+      stopCameraStream();
+    }
+    if (voiceProviderRef.current === "vapi" && vapi) {
+      try {
+        await vapi.stop();
+      } catch (error) {
+        if (!shouldSilenceVapiError(error)) {
+          throw error;
+        }
+      }
     } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
+      setAssistantSpeaking(false);
     }
 
     const withCurrent = commitAnswer(currentAnswer, currentQuestionIndex);
@@ -919,6 +1452,8 @@ const Agent = ({
     currentAnswer,
     currentQuestionIndex,
     generateAndNavigateReport,
+    isVideoInterview,
+    stopCameraStream,
     stopListening,
   ]);
 
@@ -930,6 +1465,8 @@ const Agent = ({
       (typeof overrideAnswer === "string" ? overrideAnswer : currentAnswer).trim();
 
     try {
+      resetAnswerInputMode();
+
       if (currentQuestionIndex === -1) {
         const bank =
           safeQuestions.length > 0
@@ -945,7 +1482,10 @@ const Agent = ({
 
         const selected = orderedBank.slice(0, count);
         if (!interviewId && userId) {
-          const interviewMeta = inferInterviewMeta(selected);
+          const interviewMeta =
+            effectiveRoundType === "video"
+              ? { ...VIDEO_INTERVIEW_META }
+              : inferInterviewMeta(selected);
           const created = await createInterviewSession({
             userId,
             questions: selected,
@@ -995,7 +1535,7 @@ const Agent = ({
       let insertedFollowUp = false;
 
       if (activeQuestion && resolvedInterviewId && userId) {
-        const coaching = await analyzeInterviewAnswer({
+        const coachingRequest = analyzeInterviewAnswer({
           interviewId: resolvedInterviewId,
           userId,
           questionId: activeQuestion.id,
@@ -1004,44 +1544,56 @@ const Agent = ({
           roundType: effectiveRoundType,
         });
 
-        setLatestCoaching(coaching);
+        if (effectiveRoundType === "video") {
+          void coachingRequest
+            .then((coaching) => {
+              setLatestCoaching(coaching);
+            })
+            .catch((error) => {
+              console.error(error);
+            });
+        } else {
+          const coaching = await coachingRequest;
 
-        if (
-          coaching.shouldAskFollowUp &&
-          coaching.suggestedFollowUpQuestion &&
-          !activeQuestion.wasFollowUp
-        ) {
-          insertedFollowUp = true;
-          const followUpQuestion: InterviewQuestionItem = {
-            id: `${activeQuestion.id}-followup`,
-            question: coaching.suggestedFollowUpQuestion,
-            wasFollowUp: true,
-            followUpToQuestionId: activeQuestion.id,
-          };
+          setLatestCoaching(coaching);
 
-          setSessionQuestions((prev) => {
-            if (prev.some((item) => item.id === followUpQuestion.id)) return prev;
-
-            const next = [...prev];
-            next.splice(currentQuestionIndex + 1, 0, followUpQuestion);
-            return next;
-          });
-
-          setQaLog((prev) => {
-            if (prev.some((item) => item.id === followUpQuestion.id)) return prev;
-
-            const next = [...prev];
-            next.splice(currentQuestionIndex + 1, 0, {
-              id: followUpQuestion.id,
-              question: followUpQuestion.question,
-              answer: "",
-              askedAt: new Date().toISOString(),
-              answeredAt: "",
+          if (
+            coaching.shouldAskFollowUp &&
+            coaching.suggestedFollowUpQuestion &&
+            !activeQuestion.wasFollowUp
+          ) {
+            insertedFollowUp = true;
+            const followUpQuestion: InterviewQuestionItem = {
+              id: `${activeQuestion.id}-followup`,
+              question: coaching.suggestedFollowUpQuestion,
               wasFollowUp: true,
               followUpToQuestionId: activeQuestion.id,
+            };
+
+            setSessionQuestions((prev) => {
+              if (prev.some((item) => item.id === followUpQuestion.id)) return prev;
+
+              const next = [...prev];
+              next.splice(currentQuestionIndex + 1, 0, followUpQuestion);
+              return next;
             });
-            return next;
-          });
+
+            setQaLog((prev) => {
+              if (prev.some((item) => item.id === followUpQuestion.id)) return prev;
+
+              const next = [...prev];
+              next.splice(currentQuestionIndex + 1, 0, {
+                id: followUpQuestion.id,
+                question: followUpQuestion.question,
+                answer: "",
+                askedAt: new Date().toISOString(),
+                answeredAt: "",
+                wasFollowUp: true,
+                followUpToQuestionId: activeQuestion.id,
+              });
+              return next;
+            });
+          }
         }
       }
 
@@ -1052,7 +1604,7 @@ const Agent = ({
           "Your interview is completed. You can end your call now to generate your report.";
         setIsInterviewCompleted(true);
         setCurrentPrompt(completionMessage);
-        speakText(completionMessage, startListening);
+        speakText(completionMessage, resumeListening);
         return;
       }
 
@@ -1067,11 +1619,12 @@ const Agent = ({
       currentQuestionIndex,
       effectiveRoundType,
       interviewId,
+      resetAnswerInputMode,
       resolvedInterviewId,
       safeQuestions,
       sessionQuestions,
       speakText,
-      startListening,
+      resumeListening,
       stopListening,
       userId,
     ]);
@@ -1104,23 +1657,27 @@ const Agent = ({
     setCurrentPrompt(question.question);
     setCurrentAnswer("");
     spokenTextRef.current = "";
-    speakText(question.question, startListening);
+    speakText(question.question, resumeListening);
   }, [
     callStatus,
     currentQuestionIndex,
+    resumeListening,
     sessionQuestions,
     speakText,
-    startListening,
   ]);
 
   React.useEffect(() => {
     if (callStatus !== CallStatus.INACTIVE) return;
 
     stopListening();
-    if (HAS_VAPI_TOKEN) {
-      void vapi.stop();
+    if (isVideoInterview) {
+      stopCameraStream();
+    }
+    if (vapi) {
+      void vapi.stop().catch(() => {});
     } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
+      setAssistantSpeaking(false);
     }
 
     setSessionQuestions([]);
@@ -1130,21 +1687,54 @@ const Agent = ({
     setCurrentAnswer("");
     setCurrentQuestionIndex(-1);
     setIsInterviewCompleted(false);
+    setIsUserMicEnabled(true);
+    setMicError(null);
+    setAnswerInputMode("voice");
     setResolvedInterviewId(interviewId);
     setStartedAt(null);
     pendingSpeechRef.current = null;
     lastFinalTranscriptRef.current = null;
     lastSpokenQuestionIndexRef.current = null;
+    answerInputFocusedRef.current = false;
+    manualInputModeRef.current = false;
     clearSilenceTimer();
     manualStopRef.current = false;
     shouldAutoSubmitOnEndRef.current = false;
     spokenTextRef.current = "";
-  }, [callStatus, clearSilenceTimer, interviewId, stopListening]);
+  }, [
+    callStatus,
+    clearSilenceTimer,
+    interviewId,
+    isVideoInterview,
+    stopCameraStream,
+    stopListening,
+  ]);
 
   const startInterview = async () => {
-    setCallStatus(CallStatus.CONNECTING);
+    if (isVideoInterview) {
+      const micReady = await ensureMicrophonePermission();
+      if (!micReady) {
+        updateCallStatus(CallStatus.INACTIVE);
+        return;
+      }
+
+      const cameraReady = await ensureCameraReady();
+      if (!cameraReady) {
+        updateCallStatus(CallStatus.INACTIVE);
+        return;
+      }
+    }
+
+    updateCallStatus(CallStatus.CONNECTING);
     const voiceAgentReady = await startVoiceAgentCall();
     if (!voiceAgentReady) return;
+
+    if (
+      voiceProviderRef.current === "browser" &&
+      callStatusRef.current === CallStatus.CONNECTING
+    ) {
+      updateCallStatus(CallStatus.ACTIVE);
+    }
 
     if (safeQuestions.length > 0) {
       const seededQuestions = buildQuestionItems(safeQuestions);
@@ -1168,6 +1758,7 @@ const Agent = ({
       setIsInterviewCompleted(false);
       setStartedAt(now);
       setLatestCoaching(null);
+      resetAnswerInputMode();
 
       const firstQuestion = seededQuestions[0]?.question;
       if (firstQuestion) {
@@ -1176,7 +1767,7 @@ const Agent = ({
         setCurrentPrompt(firstQuestion);
         setCurrentAnswer("");
         spokenTextRef.current = "";
-        speakText(firstQuestion, startListening);
+        speakText(firstQuestion, resumeListening);
       }
       return;
     }
@@ -1189,7 +1780,8 @@ const Agent = ({
     setCurrentAnswer("");
     setCurrentQuestionIndex(-1);
     setStartedAt(new Date().toISOString());
-    speakText(countPrompt, startListening);
+    resetAnswerInputMode();
+    speakText(countPrompt, resumeListening);
   };
 
   const handleCallClick = async () => {
@@ -1206,7 +1798,7 @@ const Agent = ({
     }
 
     if (callStatus === CallStatus.FINISHED) {
-      setCallStatus(CallStatus.INACTIVE);
+      updateCallStatus(CallStatus.INACTIVE);
     }
   };
 
@@ -1218,54 +1810,212 @@ const Agent = ({
 
     autoStartTriggeredRef.current = true;
     startInterview();
-  }, [autoStart, callStatus, safeQuestions.length]);
+  }, [autoStart, callStatus, safeQuestions.length, startInterview]);
+
+  const shouldShowResponsePanel =
+    Boolean(currentPrompt) ||
+    callStatus === CallStatus.CONNECTING ||
+    (isVideoInterview && callStatus === CallStatus.ACTIVE);
+
+  const responsePanelTitle =
+    currentPrompt ||
+    (callStatus === CallStatus.CONNECTING
+      ? "Connecting..."
+      : 
+        (currentQuestionIndex === -1
+          ? "How many questions do you want for this interview?"
+          : isInterviewCompleted
+            ? "Your interview is completed. Click End Interview to generate your report."
+            : "Answer the current interview question below."));
 
   return (
     <>
       <div className="call-view">
-        <div className="card-interviewer">
-          <div className="avatar">
-            <Image
-              src="/ai-avatar.png"
-              alt="profile-image"
-              width={65}
-              height={54}
-              className="object-cover"
-            />
-            {isSpeaking && <span className="animate-speak" />}
-          </div>
-          <h3>Ai Interviewer</h3>
-          <p className="mt-1 text-xs uppercase tracking-[0.2em] text-light-400">
-            {effectiveRoundType.replace("-", " ")} round
-          </p>
-        </div>
+        {isVideoInterview ? (
+          <>
+            <div className="card-border">
+              <div className="card-content">
+                <div className="flex w-full max-w-md flex-col items-center gap-4">
+                  <div className="video-preview-shell">
+                    <div className="video-preview-shell__screen">
+                      <div className="video-preview-shell__recruiter-shot">
+                        <Image
+                          src="/robot.png"
+                          alt="Female AI robot recruiter"
+                          width={540}
+                          height={405}
+                          className={cn(
+                            "h-full w-full object-contain px-6 pt-6 pb-3 drop-shadow-[0_18px_28px_rgba(0,0,0,0.45)] transition-transform duration-300 ease-out",
+                            isSpeaking && "scale-[1.03] translate-y-1",
+                          )}
+                        />
+                        <div
+                          className={cn(
+                            "video-preview-shell__recruiter-overlay",
+                            isSpeaking && "video-preview-shell__recruiter-overlay--active",
+                          )}
+                        />
+                        <div className="video-preview-shell__bars" aria-hidden="true">
+                          {Array.from({ length: 5 }).map((_, index) => (
+                            <span
+                              key={`ai-bar-${index}`}
+                              className={cn(
+                                "ai-speaking-bar",
+                                isSpeaking && "ai-speaking-bar--active",
+                              )}
+                              style={{ animationDelay: `${index * 0.12}s` }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-        <div className="card-border">
-          <div className="card-content">
-            <Image
-              src="/user-avatar.png"
-              alt="user-image"
-              width={540}
-              height={540}
-              className="object-cover rounded-full size-[120px]"
-            />
-            <h3>{userName}</h3>
-          </div>
-        </div>
+                  <div className="flex flex-col items-center gap-2">
+                    <h3 className="!mt-0">AI Recruiter</h3>
+                    <p className="text-xs uppercase tracking-[0.2em] text-light-400">
+                      Recruiter
+                    </p>
+                    <div className="flex items-center justify-center gap-3">
+                      {renderStatusBadge(isAiMicOn, Mic, MicOff, "AI microphone")}
+                      {renderStatusBadge(true, Video, VideoOff, "AI video")}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card-border">
+              <div className="card-content">
+                <div className="flex w-full max-w-md flex-col items-center gap-4">
+                  <div className="video-preview-shell">
+                    <div className="video-preview-shell__screen">
+                      {isCameraEnabled ? (
+                        <video
+                          ref={videoPreviewRef}
+                          autoPlay
+                          muted
+                          playsInline
+                          className="size-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                          {isPreparingCamera ? (
+                            <LoaderCircle className="size-8 animate-spin text-primary-100" />
+                          ) : (
+                            <CameraOff className="size-8 text-primary-100" />
+                          )}
+                          <p className="text-sm text-light-100">
+                            {isPreparingCamera
+                              ? "Preparing camera preview..."
+                              : "Enable your camera to practice a real video interview."}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-2">
+                    <h3 className="!mt-0">{userName}</h3>
+                    <p className="text-xs uppercase tracking-[0.2em] text-light-400">
+                      Candidate
+                    </p>
+                    <div className="flex items-center justify-center gap-3">
+                      {renderStatusBadge(isUserMicOn, Mic, MicOff, "Microphone", {
+                        onClick: handleMicToggle,
+                        interactive: true,
+                      })}
+                      {renderStatusBadge(isUserVideoOn, Video, VideoOff, "Camera", {
+                        onClick: () => {
+                          void handleCameraToggle();
+                        },
+                        interactive: true,
+                      })}
+                    </div>
+                  </div>
+
+                  {cameraError ? (
+                    <p className="max-w-sm text-center text-sm text-red-300">{cameraError}</p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="card-interviewer">
+              <div className="avatar">
+                <Image
+                  src="/ai-avatar.png"
+                  alt="profile-image"
+                  width={65}
+                  height={54}
+                  className="object-cover"
+                />
+                {isSpeaking && <span className="animate-speak" />}
+              </div>
+              <h3>Ai Interviewer</h3>
+              <p className="mt-1 text-xs uppercase tracking-[0.2em] text-light-400">
+                {roundLabel}
+              </p>
+            </div>
+
+            <div className="card-border">
+              <div className="card-content">
+                <Image
+                  src="/user-avatar.png"
+                  alt="user-image"
+                  width={540}
+                  height={540}
+                  className="object-cover rounded-full size-[120px]"
+                />
+                <h3>{userName}</h3>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
-      {(currentPrompt || callStatus === CallStatus.CONNECTING) && (
+      {shouldShowResponsePanel && (
         <div className="transcript-border">
           <div className="transcript flex-col items-stretch">
             <p className="font-semibold text-left">
-              {callStatus === CallStatus.CONNECTING ? "Connecting..." : currentPrompt}
+              {responsePanelTitle}
             </p>
 
             {callStatus === CallStatus.ACTIVE && (
               <div className="mt-3 flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      answerInputMode === "voice"
+                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+                        : "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                    )}
+                  >
+                    {answerInputMode === "voice"
+                      ? isListening
+                        ? "Mic capturing"
+                        : "Voice ready"
+                      : "Typing mode"}
+                  </span>
+                  {voiceProvider === "browser" && speechSupported && currentQuestionIndex >= 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleVoiceCaptureToggle}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-light-100 transition-all hover:border-primary-200/40 hover:bg-primary-200/10 hover:text-primary-100"
+                      disabled={isGeneratingReport || !isUserMicEnabled}
+                    >
+                      {isListening ? "Pause Mic" : "Use Mic"}
+                    </button>
+                  ) : null}
+                </div>
                 <input
                   value={currentAnswer}
-                  onChange={(e) => setCurrentAnswer(e.target.value)}
+                  onFocus={handleAnswerInputFocus}
+                  onBlur={handleAnswerInputBlur}
+                  onChange={(e) => handleAnswerInputChange(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
@@ -1279,7 +2029,12 @@ const Agent = ({
                         ? "Listening... you can also type your answer"
                         : "Type your answer here"
                   }
-                  className="w-full rounded-md bg-dark-200 border border-dark-300 px-3 py-2 text-white"
+                  className={cn(
+                    "w-full rounded-2xl border bg-dark-200/80 px-4 py-3 text-white outline-none transition-all",
+                    answerInputMode === "typing"
+                      ? "border-amber-300/40 shadow-[0_0_0_1px_rgba(252,211,77,0.18)] focus:border-amber-300/60"
+                      : "border-dark-300 focus:border-primary-200/50 focus:shadow-[0_0_0_1px_rgba(202,197,254,0.18)]",
+                  )}
                 />
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <button
@@ -1307,7 +2062,7 @@ const Agent = ({
                 </div>
                 {isInterviewCompleted && (
                   <p className="text-sm text-light-100">
-                    Click <strong>End</strong> to generate your report.
+                    Click <strong>{isVideoInterview ? "End Video Interview" : "End"}</strong> to generate your report.
                   </p>
                 )}
               </div>
@@ -1346,29 +2101,31 @@ const Agent = ({
                 Voice input is not supported in this browser. Typing still works.
               </p>
             )}
+
+            {micError && (
+              <p className="mt-2 text-sm text-red-300">
+                {micError}
+              </p>
+            )}
           </div>
         </div>
       )}
 
       <div className="w-full flex justify-center">
-        {callStatus !== CallStatus.ACTIVE ? (
+        {callStatus === CallStatus.INACTIVE || callStatus === CallStatus.FINISHED ? (
           <button
             className="relative btn-call"
             onClick={handleCallClick}
             disabled={isGeneratingReport}
           >
-            <span
-              className={cn(
-                "absolute animate-ping rounded-full opacity-75",
-                callStatus !== CallStatus.CONNECTING && "hidden",
-              )}
-            />
             <span className="relative">
               {isGeneratingReport
                 ? "Generating Report..."
                 : callStatus === CallStatus.FINISHED
                   ? "Start Again"
-                  : "Call"}
+                  : isVideoInterview
+                    ? "Start Video Interview"
+                    : "Call"}
             </span>
           </button>
         ) : (
@@ -1377,7 +2134,11 @@ const Agent = ({
             onClick={handleCallClick}
             disabled={isGeneratingReport}
           >
-            {isGeneratingReport ? "Generating..." : "End"}
+            {isGeneratingReport
+              ? "Generating..."
+              : isVideoInterview
+                ? "End Video Interview"
+                : "End"}
           </button>
         )}
       </div>

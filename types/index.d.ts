@@ -36,6 +36,7 @@ type InterviewRoundType =
   | "technical"
   | "managerial"
   | "full-loop"
+  | "video"
   | "live-coding";
 
 type CodingLanguage = "javascript" | "python" | "java" | "go" | "ruby";
