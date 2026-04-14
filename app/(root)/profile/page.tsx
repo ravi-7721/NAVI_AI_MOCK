@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
-import DisplayTechIcons from "@/components/DisplayTechIcons";
 import { Button } from "@/components/ui/button";
 import {
   getCurrentUser,
@@ -369,7 +368,7 @@ const ProfilePage = async ({ searchParams }: ProfilePageProps) => {
                 Save Changes
               </Button>
               <Button asChild className="btn-secondary">
-                {/* <Link href="/settings">Edit Interview Settings</Link> */}
+                <Link href="/settings">Edit Interview Settings</Link>
               </Button>
             </div>
           </form>
