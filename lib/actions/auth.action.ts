@@ -13,6 +13,11 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   interviewGoal: "Improve confidence and answer clarity.",
 };
 
+const getFallbackUserName = (email?: string | null) => {
+  const localPart = (email || "").split("@")[0]?.trim();
+  return localPart || "User";
+};
+
 const normalizeHobbies = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
 
@@ -37,6 +42,33 @@ const fileToDataUrl = async (file: File) => {
   const bytes = Buffer.from(await file.arrayBuffer());
   const mimeType = file.type || "image/jpeg";
   return `data:${mimeType};base64,${bytes.toString("base64")}`;
+};
+
+const ensureUserDocument = async ({
+  uid,
+  email,
+  name,
+}: {
+  uid: string;
+  email?: string | null;
+  name?: string | null;
+}) => {
+  const userRef = db.collection("users").doc(uid);
+  const userSnapshot = await userRef.get();
+
+  if (userSnapshot.exists) {
+    return userSnapshot;
+  }
+
+  await userRef.set(
+    {
+      name: name?.trim() || getFallbackUserName(email),
+      email: email?.trim() || "",
+    },
+    { merge: true },
+  );
+
+  return userRef.get();
 };
 
 // Set session cookie
@@ -113,10 +145,16 @@ export async function signIn(params: SignInParams) {
         message: "User does not exist. Create an account.",
       };
 
+    await ensureUserDocument({
+      uid: userRecord.uid,
+      email: userRecord.email,
+      name: userRecord.displayName,
+    });
+
     await setSessionCookie(idToken);
     return { success: true };
-  } catch {
-    console.log("");
+  } catch (error) {
+    console.error("Error logging into account:", error);
 
     return {
       success: false,
@@ -143,10 +181,20 @@ export async function getCurrentUser(): Promise<User | null> {
     const decodedClaims = await auth.verifySessionCookie(sessionCookie, true);
 
     // get user info from db
-    const userRecord = await db
+    let userRecord = await db
       .collection("users")
       .doc(decodedClaims.uid)
       .get();
+
+    if (!userRecord.exists) {
+      const authUser = await auth.getUser(decodedClaims.uid);
+      userRecord = await ensureUserDocument({
+        uid: authUser.uid,
+        email: authUser.email,
+        name: authUser.displayName,
+      });
+    }
+
     if (!userRecord.exists) return null;
 
     return {
