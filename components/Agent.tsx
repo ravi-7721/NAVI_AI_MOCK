@@ -68,7 +68,7 @@ type SpeechRecognitionErrorEvent = {
 };
 
 const INTRO_QUESTION = "Tell me about yourself and your background.";
-const SILENCE_TIMEOUT_MS = 2600;
+const ANSWER_SILENCE_GAP_MS = 10000;
 const LISTENING_RESUME_DELAY_MS = 120;
 const HAS_VAPI_TOKEN = Boolean(vapi);
 
@@ -93,7 +93,7 @@ const VOICE_AGENT: CreateAssistantDTO = {
       {
         role: "system",
         content:
-          "You are a silent recruiter voice assistant inside a controlled interview UI. Never ask your own questions, never continue the interview on your own, and never answer unless the client explicitly sends a say command. Stay silent while the candidate is speaking.",
+          "You are a controlled recruiter voice inside an interview UI. Speak only the exact text the app sends you. Never mention commands, controls, or system behavior. Never ask your own questions or continue the interview on your own. While the candidate is speaking, remain silent, then wait for the app to send the next question after the silence gap.",
       },
     ],
   },
@@ -209,6 +209,89 @@ const VIDEO_INTERVIEW_META: Pick<
   type: "Video",
   level: "Mid",
   techstack: ["Communication", "Confidence", "Storytelling"],
+};
+
+const DELIVERY_FILLER_TERMS = [
+  "um",
+  "uh",
+  "like",
+  "you know",
+  "actually",
+  "basically",
+  "literally",
+  "i mean",
+] as const;
+
+const clampMetric = (value: number, min = 0, max = 100) =>
+  Math.max(min, Math.min(max, Math.round(value)));
+
+const countPatternOccurrences = (value: string, pattern: RegExp) =>
+  value.match(pattern)?.length || 0;
+
+const countDeliveryFillers = (answer: string) => {
+  const normalized = answer.toLowerCase();
+
+  return DELIVERY_FILLER_TERMS.reduce((total, term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return total + countPatternOccurrences(normalized, new RegExp(`\\b${escaped}\\b`, "g"));
+  }, 0);
+};
+
+const getAnswerDurationSeconds = (
+  askedAt: string | undefined,
+  answeredAt: string | undefined,
+  wordCount: number,
+) => {
+  const started = askedAt ? new Date(askedAt).getTime() : NaN;
+  const ended = answeredAt ? new Date(answeredAt).getTime() : NaN;
+  const fromTimestamps =
+    Number.isFinite(started) && Number.isFinite(ended) && ended > started
+      ? Math.round((ended - started) / 1000)
+      : 0;
+
+  if (fromTimestamps > 0) return Math.max(1, fromTimestamps);
+
+  if (wordCount <= 0) return 0;
+
+  return Math.max(3, Math.round((wordCount / 125) * 60));
+};
+
+const buildAnswerDeliveryMetrics = (params: {
+  answer: string;
+  askedAt?: string;
+  answeredAt?: string;
+  pauseCount?: number;
+}): AnswerDeliveryMetrics => {
+  const normalizedAnswer = params.answer.trim();
+  const wordCount = normalizedAnswer
+    ? normalizedAnswer.split(/\s+/).filter(Boolean).length
+    : 0;
+  const durationSeconds = getAnswerDurationSeconds(
+    params.askedAt,
+    params.answeredAt,
+    wordCount,
+  );
+  const wordsPerMinute =
+    wordCount > 0 && durationSeconds > 0
+      ? clampMetric((wordCount / durationSeconds) * 60, 0, 240)
+      : 0;
+  const fillerCount = countDeliveryFillers(normalizedAnswer);
+  const pauseCount = Math.max(0, Number(params.pauseCount || 0));
+  const pacePenalty =
+    wordsPerMinute > 0 ? Math.min(26, Math.abs(wordsPerMinute - 135) / 3.5) : 18;
+  const shortAnswerPenalty = wordCount >= 18 ? 0 : Math.max(0, 18 - wordCount);
+  const confidenceScore = clampMetric(
+    92 - fillerCount * 8 - pauseCount * 6 - pacePenalty - shortAnswerPenalty,
+  );
+
+  return {
+    wordCount,
+    durationSeconds,
+    wordsPerMinute,
+    fillerCount,
+    pauseCount,
+    confidenceScore,
+  };
 };
 
 const orderQuestionBank = (questions: readonly string[]) => {
@@ -425,37 +508,71 @@ const pickPreferredFemaleVoice = (voices: SpeechSynthesisVoice[]) => {
 
 const getVapiErrorMeta = (error: unknown) => {
   if (typeof error === "string") {
-    return { type: "", message: error };
+    return { type: "", stage: "", message: error };
+  }
+
+  if (error instanceof Error) {
+    return {
+      type: error.name || "",
+      stage: "",
+      message: error.message || "Unknown Vapi error",
+    };
   }
 
   if (!error || typeof error !== "object") {
-    return { type: "", message: "Unknown Vapi error" };
+    return { type: "", stage: "", message: "Unknown Vapi error" };
   }
 
   const record = error as {
     type?: string;
-    error?: {
-      message?: string;
-      msg?: string;
-      type?: string;
-      errorMsg?: string;
-    };
-    message?: {
-      msg?: string;
-      type?: string;
-    };
+    stage?: string;
+    error?:
+      | string
+      | {
+          message?: string;
+          msg?: string;
+          type?: string;
+          errorMsg?: string;
+        };
+    message?:
+      | string
+      | {
+          msg?: string;
+          type?: string;
+        };
   };
+  const nestedError =
+    record.error && typeof record.error === "object" ? record.error : undefined;
+  const nestedMessage =
+    record.message && typeof record.message === "object" ? record.message : undefined;
 
   return {
-    type: String(record.type || record.error?.type || record.message?.type || ""),
+    type: String(record.type || nestedError?.type || nestedMessage?.type || ""),
+    stage: String(record.stage || ""),
     message: String(
-      record.error?.message ||
-        record.error?.msg ||
-        record.error?.errorMsg ||
-        record.message?.msg ||
+      (typeof record.error === "string" ? record.error : "") ||
+        nestedError?.message ||
+        nestedError?.msg ||
+        nestedError?.errorMsg ||
+        (typeof record.message === "string" ? record.message : "") ||
+        nestedMessage?.msg ||
         "Unknown Vapi error",
     ),
   };
+};
+
+const isRecoverableVapiAudioProcessingError = (error: unknown) => {
+  const { type, stage, message } = getVapiErrorMeta(error);
+  const combined = `${type} ${stage} ${message}`.toLowerCase();
+
+  return (
+    combined.includes("audio-processing-setup-error") ||
+    combined.includes("audio-processor-error") ||
+    combined.includes("error unloading krisp processor") ||
+    combined.includes("krisp") ||
+    combined.includes("noise-cancellation") ||
+    combined.includes("wasm_or_worker_not_ready")
+  );
 };
 
 const isRecoverableVapiDisconnect = (error: unknown) => {
@@ -476,11 +593,14 @@ const shouldSilenceVapiError = (error: unknown) => {
   const combined = `${type} ${message}`.toLowerCase();
 
   return (
+    isRecoverableVapiAudioProcessingError(error) ||
     isRecoverableVapiDisconnect(error) ||
     combined.includes("meeting ended due to ejection") ||
     combined.includes("meeting has ended")
   );
 };
+
+const shouldSilenceVapiConsoleArgs = (args: unknown[]) => args.some(shouldSilenceVapiError);
 
 const isValidInterviewAnswer = (answer: string, question: string) => {
   const normalizedAnswer = normalizeSpeech(answer);
@@ -535,6 +655,8 @@ const Agent = ({
   const [currentAnswer, setCurrentAnswer] = React.useState("");
   const [qaLog, setQaLog] = React.useState<ReplayQuestionEntry[]>([]);
   const [latestCoaching, setLatestCoaching] = React.useState<AnswerCoaching | null>(null);
+  const [latestDeliveryMetrics, setLatestDeliveryMetrics] =
+    React.useState<AnswerDeliveryMetrics | null>(null);
   const [isListening, setIsListening] = React.useState(false);
   const [speechSupported, setSpeechSupported] = React.useState(true);
   const [micError, setMicError] = React.useState<string | null>(null);
@@ -562,6 +684,7 @@ const Agent = ({
   const autoSubmitFromSpeechRef = React.useRef<(answer: string) => void>(() => {});
   const startListeningRef = React.useRef<() => void>(() => {});
   const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const delayedAutoSubmitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualStopRef = React.useRef(false);
   const shouldAutoSubmitOnEndRef = React.useRef(false);
   const autoStartTriggeredRef = React.useRef(false);
@@ -573,11 +696,14 @@ const Agent = ({
     !isVideoInterview && HAS_VAPI_TOKEN ? "vapi" : "browser",
   );
   const pendingSpeechRef = React.useRef<string | null>(null);
+  const suppressUnexpectedVapiEndRef = React.useRef(false);
   const lastFinalTranscriptRef = React.useRef<{
     questionIndex: number;
     transcript: string;
   } | null>(null);
   const lastSpokenQuestionIndexRef = React.useRef<number | null>(null);
+  const pauseCountByQuestionRef = React.useRef<Record<string, number>>({});
+  const lastSpeechActivityAtRef = React.useRef<number | null>(null);
   const micPermissionGrantedRef = React.useRef(false);
   const answerInputFocusedRef = React.useRef(false);
   const manualInputModeRef = React.useRef(false);
@@ -709,6 +835,46 @@ const Agent = ({
   React.useEffect(() => {
     currentPromptRef.current = currentPrompt;
   }, [currentPrompt]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const originalConsoleError = console.error;
+
+    console.error = (...args: Parameters<typeof console.error>) => {
+      if (shouldSilenceVapiConsoleArgs(args)) return;
+      originalConsoleError(...args);
+    };
+
+    return () => {
+      console.error = originalConsoleError;
+    };
+  }, []);
+
+  const markQuestionAsked = React.useCallback((index: number) => {
+    setQaLog((prev) => {
+      if (!prev[index] || prev[index].askedAt) return prev;
+
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        askedAt: new Date().toISOString(),
+      };
+      return next;
+    });
+  }, []);
+
+  const currentDeliveryMetrics = React.useMemo(() => {
+    if (!isVideoInterview || currentQuestionIndex < 0 || !currentAnswer.trim()) return null;
+
+    const currentEntry = qaLog[currentQuestionIndex];
+    return buildAnswerDeliveryMetrics({
+      answer: currentAnswer,
+      askedAt: currentEntry?.askedAt,
+      answeredAt: new Date().toISOString(),
+      pauseCount: currentEntry ? pauseCountByQuestionRef.current[currentEntry.id] || 0 : 0,
+    });
+  }, [currentAnswer, currentQuestionIndex, isVideoInterview, qaLog]);
 
   const ensureMicrophonePermission = React.useCallback(async () => {
     if (micPermissionGrantedRef.current) return true;
@@ -853,10 +1019,34 @@ const Agent = ({
     }
   }, []);
 
+  const clearDelayedAutoSubmitTimer = React.useCallback(() => {
+    if (delayedAutoSubmitTimerRef.current) {
+      clearTimeout(delayedAutoSubmitTimerRef.current);
+      delayedAutoSubmitTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleDelayedAutoSubmit = React.useCallback(
+    (answer: string) => {
+      const normalizedAnswer = answer.trim();
+      clearDelayedAutoSubmitTimer();
+
+      if (!normalizedAnswer) return;
+
+      delayedAutoSubmitTimerRef.current = window.setTimeout(() => {
+        delayedAutoSubmitTimerRef.current = null;
+        autoSubmitFromSpeechRef.current(normalizedAnswer);
+      }, ANSWER_SILENCE_GAP_MS);
+    },
+    [clearDelayedAutoSubmitTimer],
+  );
+
   const stopListening = React.useCallback(() => {
     manualStopRef.current = true;
     shouldAutoSubmitOnEndRef.current = false;
     clearSilenceTimer();
+    clearDelayedAutoSubmitTimer();
+    lastSpeechActivityAtRef.current = null;
 
     if (voiceProviderRef.current === "vapi") {
       setIsListening(false);
@@ -868,7 +1058,7 @@ const Agent = ({
       recognitionRef.current = null;
     }
     setIsListening(false);
-  }, [clearSilenceTimer]);
+  }, [clearDelayedAutoSubmitTimer, clearSilenceTimer]);
 
   const speakText = React.useCallback((text: string, onDone: () => void) => {
     if (voiceProviderRef.current === "vapi") {
@@ -970,6 +1160,21 @@ const Agent = ({
           transcript += `${event.results[i][0].transcript} `;
         }
         const finalText = transcript.replace(/\s+/g, " ").trim();
+        const now = Date.now();
+        const activeQuestion = sessionQuestions[currentQuestionIndexRef.current];
+
+        if (
+          activeQuestion &&
+          finalText &&
+          lastSpeechActivityAtRef.current &&
+          now - lastSpeechActivityAtRef.current > 1400
+        ) {
+          pauseCountByQuestionRef.current[activeQuestion.id] =
+            (pauseCountByQuestionRef.current[activeQuestion.id] || 0) + 1;
+        }
+        if (finalText) {
+          lastSpeechActivityAtRef.current = now;
+        }
 
         if (answerInputFocusedRef.current || manualInputModeRef.current) {
           spokenTextRef.current = finalText;
@@ -984,7 +1189,7 @@ const Agent = ({
         silenceTimerRef.current = setTimeout(() => {
           shouldAutoSubmitOnEndRef.current = true;
           recognition.stop();
-        }, SILENCE_TIMEOUT_MS);
+        }, ANSWER_SILENCE_GAP_MS);
       };
 
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -1008,6 +1213,7 @@ const Agent = ({
         setIsListening(false);
         recognitionRef.current = null;
         clearSilenceTimer();
+        lastSpeechActivityAtRef.current = null;
         const finalSpoken = (spokenTextRef.current || "").trim();
         if (manualStopRef.current) {
           manualStopRef.current = false;
@@ -1088,6 +1294,7 @@ const Agent = ({
     isInterviewCompleted,
     isUserMicEnabled,
     isVideoInterview,
+    sessionQuestions,
     stopListening,
   ]);
 
@@ -1097,6 +1304,7 @@ const Agent = ({
     const client = vapi;
 
     const handleCallStart = () => {
+      suppressUnexpectedVapiEndRef.current = false;
       updateCallStatus(CallStatus.ACTIVE);
       setIsListening(true);
 
@@ -1116,6 +1324,36 @@ const Agent = ({
     const handleCallEnd = () => {
       setAssistantSpeaking(false);
       setIsListening(false);
+      clearSilenceTimer();
+      clearDelayedAutoSubmitTimer();
+
+      if (suppressUnexpectedVapiEndRef.current) {
+        suppressUnexpectedVapiEndRef.current = false;
+        return;
+      }
+
+      const endedUnexpectedly =
+        voiceProviderRef.current === "vapi" &&
+        callStatusRef.current !== CallStatus.INACTIVE &&
+        callStatusRef.current !== CallStatus.FINISHED &&
+        !isGeneratingReport &&
+        !isInterviewCompleted;
+
+      if (endedUnexpectedly && getVoiceFallbackSupport()) {
+        setVoiceProviderMode("browser");
+        setSpeechSupported(Boolean(getRecognitionCtor()));
+        pendingSpeechRef.current = null;
+
+        if (callStatusRef.current === CallStatus.CONNECTING) {
+          updateCallStatus(CallStatus.ACTIVE);
+        }
+
+        toast.error("Voice meeting ended. Switched to local voice mode.");
+
+        window.setTimeout(() => {
+          resumeListening();
+        }, LISTENING_RESUME_DELAY_MS);
+      }
     };
 
     const handleSpeechStart = () => {
@@ -1136,6 +1374,7 @@ const Agent = ({
 
       if (message.role !== "user") return;
 
+      clearDelayedAutoSubmitTimer();
       setCurrentAnswer(message.transcript);
 
       if (message.transcriptType === "final") {
@@ -1155,12 +1394,16 @@ const Agent = ({
           transcript: finalTranscript,
         };
 
-        autoSubmitFromSpeechRef.current(finalTranscript);
+        scheduleDelayedAutoSubmit(finalTranscript);
       }
     };
 
     const handleError = (error: unknown) => {
       const { message: errorMessage } = getVapiErrorMeta(error);
+
+      if (isRecoverableVapiAudioProcessingError(error)) {
+        return;
+      }
 
       if (voiceProviderRef.current !== "vapi" && shouldSilenceVapiError(error)) {
         return;
@@ -1176,6 +1419,7 @@ const Agent = ({
         setIsListening(false);
         setAssistantSpeaking(false);
         pendingSpeechRef.current = null;
+        suppressUnexpectedVapiEndRef.current = true;
         void client.stop().catch(() => {});
 
         if (callStatusRef.current === CallStatus.CONNECTING) {
@@ -1196,6 +1440,10 @@ const Agent = ({
       error?: string;
       stage?: string;
     }) => {
+      if (isRecoverableVapiAudioProcessingError(event)) {
+        return;
+      }
+
       const stage = event?.stage ? `${event.stage}: ` : "";
       toast.error(`Voice start failed. ${stage}${event?.error || "Unknown error"}`);
       updateCallStatus(CallStatus.INACTIVE);
@@ -1219,9 +1467,19 @@ const Agent = ({
       client.removeListener("message", handleMessage);
       client.removeListener("error", handleError);
       client.removeListener("call-start-failed", handleCallStartFailed);
+      suppressUnexpectedVapiEndRef.current = true;
       void client.stop().catch(() => {});
     };
-  }, [setVoiceProviderMode, updateCallStatus]);
+  }, [
+    clearDelayedAutoSubmitTimer,
+    clearSilenceTimer,
+    isGeneratingReport,
+    isInterviewCompleted,
+    resumeListening,
+    scheduleDelayedAutoSubmit,
+    setVoiceProviderMode,
+    updateCallStatus,
+  ]);
 
   React.useEffect(() => {
     startListeningRef.current = startListening;
@@ -1273,12 +1531,25 @@ const Agent = ({
     (answer: string, index: number, baseLog?: ReplayQuestionEntry[]) => {
       const targetLog = baseLog ? [...baseLog] : [...qaLog];
       if (!targetLog[index]) return targetLog;
+      const normalizedAnswer = answer.trim();
+      const answeredAt = new Date().toISOString();
+      const askedAt = targetLog[index].askedAt || answeredAt;
+      const deliveryMetrics = buildAnswerDeliveryMetrics({
+        answer: normalizedAnswer,
+        askedAt,
+        answeredAt,
+        pauseCount: pauseCountByQuestionRef.current[targetLog[index].id] || 0,
+      });
 
       targetLog[index] = {
         ...targetLog[index],
-        answer: answer.trim() || "(No answer)",
-        answeredAt: new Date().toISOString(),
+        answer: normalizedAnswer || "(No answer)",
+        askedAt,
+        answeredAt,
+        deliveryMetrics,
       };
+      setLatestDeliveryMetrics(deliveryMetrics);
+      pauseCountByQuestionRef.current[targetLog[index].id] = 0;
 
       return targetLog;
     },
@@ -1433,6 +1704,7 @@ const Agent = ({
     }
     if (voiceProviderRef.current === "vapi" && vapi) {
       try {
+        suppressUnexpectedVapiEndRef.current = true;
         await vapi.stop();
       } catch (error) {
         if (!shouldSilenceVapiError(error)) {
@@ -1513,7 +1785,7 @@ const Agent = ({
             id: item.id,
             question: item.question,
             answer: "",
-            askedAt: now,
+            askedAt: "",
             answeredAt: "",
             wasFollowUp: item.wasFollowUp,
             followUpToQuestionId: item.followUpToQuestionId,
@@ -1524,6 +1796,7 @@ const Agent = ({
         setCurrentQuestionIndex(0);
         setIsInterviewCompleted(false);
         setLatestCoaching(null);
+        setLatestDeliveryMetrics(null);
         return;
       }
 
@@ -1586,7 +1859,7 @@ const Agent = ({
                 id: followUpQuestion.id,
                 question: followUpQuestion.question,
                 answer: "",
-                askedAt: new Date().toISOString(),
+                askedAt: "",
                 answeredAt: "",
                 wasFollowUp: true,
                 followUpToQuestionId: activeQuestion.id,
@@ -1641,6 +1914,8 @@ const Agent = ({
     if (currentQuestionIndex < 0 || currentQuestionIndex >= sessionQuestions.length)
       return;
 
+    markQuestionAsked(currentQuestionIndex);
+
     if (preSpokenQuestionIndexRef.current === currentQuestionIndex) {
       preSpokenQuestionIndexRef.current = null;
       lastSpokenQuestionIndexRef.current = currentQuestionIndex;
@@ -1661,6 +1936,7 @@ const Agent = ({
   }, [
     callStatus,
     currentQuestionIndex,
+    markQuestionAsked,
     resumeListening,
     sessionQuestions,
     speakText,
@@ -1674,6 +1950,7 @@ const Agent = ({
       stopCameraStream();
     }
     if (vapi) {
+      suppressUnexpectedVapiEndRef.current = true;
       void vapi.stop().catch(() => {});
     } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -1683,6 +1960,7 @@ const Agent = ({
     setSessionQuestions([]);
     setQaLog([]);
     setLatestCoaching(null);
+    setLatestDeliveryMetrics(null);
     setCurrentPrompt("");
     setCurrentAnswer("");
     setCurrentQuestionIndex(-1);
@@ -1695,14 +1973,18 @@ const Agent = ({
     pendingSpeechRef.current = null;
     lastFinalTranscriptRef.current = null;
     lastSpokenQuestionIndexRef.current = null;
+    pauseCountByQuestionRef.current = {};
+    lastSpeechActivityAtRef.current = null;
     answerInputFocusedRef.current = false;
     manualInputModeRef.current = false;
     clearSilenceTimer();
+    clearDelayedAutoSubmitTimer();
     manualStopRef.current = false;
     shouldAutoSubmitOnEndRef.current = false;
     spokenTextRef.current = "";
   }, [
     callStatus,
+    clearDelayedAutoSubmitTimer,
     clearSilenceTimer,
     interviewId,
     isVideoInterview,
@@ -1746,7 +2028,7 @@ const Agent = ({
           id: item.id,
           question: item.question,
           answer: "",
-          askedAt: now,
+          askedAt: "",
           answeredAt: "",
           wasFollowUp: item.wasFollowUp,
           followUpToQuestionId: item.followUpToQuestionId,
@@ -1758,6 +2040,7 @@ const Agent = ({
       setIsInterviewCompleted(false);
       setStartedAt(now);
       setLatestCoaching(null);
+      setLatestDeliveryMetrics(null);
       resetAnswerInputMode();
 
       const firstQuestion = seededQuestions[0]?.question;
@@ -2068,6 +2351,45 @@ const Agent = ({
               </div>
             )}
 
+            {isVideoInterview && (currentDeliveryMetrics || latestDeliveryMetrics) ? (
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-primary-200/30 px-3 py-1 text-xs text-primary-100">
+                    Delivery Snapshot
+                  </span>
+                  <span className="text-sm text-light-400">
+                    {currentDeliveryMetrics ? "Live answer metrics" : "Latest submitted answer"}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-light-400">Confidence</p>
+                    <p className="mt-1 text-white">
+                      {(currentDeliveryMetrics || latestDeliveryMetrics)?.confidenceScore ?? 0}/100
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-light-400">Pace</p>
+                    <p className="mt-1 text-white">
+                      {(currentDeliveryMetrics || latestDeliveryMetrics)?.wordsPerMinute ?? 0} wpm
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-light-400">Fillers</p>
+                    <p className="mt-1 text-white">
+                      {(currentDeliveryMetrics || latestDeliveryMetrics)?.fillerCount ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-light-400">Pauses</p>
+                    <p className="mt-1 text-white">
+                      {(currentDeliveryMetrics || latestDeliveryMetrics)?.pauseCount ?? 0}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             {latestCoaching ? (
               <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -2093,6 +2415,18 @@ const Agent = ({
                     <p className="mt-1 text-white">{latestCoaching.depthScore}</p>
                   </div>
                 </div>
+                {latestCoaching.deliveryNote ? (
+                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-sm text-light-400">Delivery note</p>
+                    <p className="mt-1 text-sm text-white">{latestCoaching.deliveryNote}</p>
+                  </div>
+                ) : null}
+                {latestCoaching.improvedAnswer ? (
+                  <div className="mt-3 rounded-xl border border-primary-200/20 bg-primary-200/8 p-3">
+                    <p className="text-sm text-light-400">Stronger answer</p>
+                    <p className="mt-1 text-sm text-white">{latestCoaching.improvedAnswer}</p>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

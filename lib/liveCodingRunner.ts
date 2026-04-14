@@ -134,6 +134,7 @@ try {
     id: ${toStringLiteral(testCase.id)},
     title: ${toStringLiteral(testCase.title)},
     passed,
+    visibility: ${toStringLiteral(testCase.visibility ?? "sample")},
     details: passed ? "Passed" : "Expected " + expectedSerialized + " but received " + actualSerialized,
   });
 } catch (error) {
@@ -141,6 +142,7 @@ try {
     id: ${toStringLiteral(testCase.id)},
     title: ${toStringLiteral(testCase.title)},
     passed: false,
+    visibility: ${toStringLiteral(testCase.visibility ?? "sample")},
     details: error instanceof Error ? error.message : String(error),
   });
 }`;
@@ -169,6 +171,7 @@ try:
         "id": ${toStringLiteral(testCase.id)},
         "title": ${toStringLiteral(testCase.title)},
         "passed": passed,
+        "visibility": ${toStringLiteral(testCase.visibility ?? "sample")},
         "details": "Passed" if passed else f"Expected {expected_serialized} but received {actual_serialized}",
     })
 except Exception as error:
@@ -176,6 +179,7 @@ except Exception as error:
         "id": ${toStringLiteral(testCase.id)},
         "title": ${toStringLiteral(testCase.title)},
         "passed": False,
+        "visibility": ${toStringLiteral(testCase.visibility ?? "sample")},
         "details": str(error),
     })`;
     })
@@ -205,6 +209,7 @@ begin
     id: ${toStringLiteral(testCase.id)},
     title: ${toStringLiteral(testCase.title)},
     passed: passed,
+    visibility: ${toStringLiteral(testCase.visibility ?? "sample")},
     details: passed ? "Passed" : "Expected #{expected_serialized} but received #{actual_serialized}",
   }
 rescue StandardError => error
@@ -212,6 +217,7 @@ rescue StandardError => error
     id: ${toStringLiteral(testCase.id)},
     title: ${toStringLiteral(testCase.title)},
     passed: false,
+    visibility: ${toStringLiteral(testCase.visibility ?? "sample")},
     details: error.message,
   }
 end`;
@@ -241,6 +247,7 @@ func() {
         ID: ${toStringLiteral(testCase.id)},
         Title: ${toStringLiteral(testCase.title)},
         Passed: false,
+        Visibility: ${toStringLiteral(testCase.visibility ?? "sample")},
         Details: fmt.Sprint(err),
       })
     }
@@ -258,6 +265,7 @@ func() {
     ID: ${toStringLiteral(testCase.id)},
     Title: ${toStringLiteral(testCase.title)},
     Passed: passed,
+    Visibility: ${toStringLiteral(testCase.visibility ?? "sample")},
     Details: details,
   })
 }()`;
@@ -275,6 +283,7 @@ type testResult struct {
   ID string \`json:"id"\`
   Title string \`json:"title"\`
   Passed bool \`json:"passed"\`
+  Visibility string \`json:"visibility"\`
   Details string \`json:"details"\`
 }
 
@@ -313,6 +322,7 @@ const buildJavaRunnerSource = (challenge: CodingChallenge) => {
         ${toStringLiteral(testCase.id)},
         ${toStringLiteral(testCase.title)},
         passed,
+        ${toStringLiteral(testCase.visibility ?? "sample")},
         passed ? "Passed" : "Expected " + expectedSerialized + " but received " + actualSerialized
       ));
     } catch (Throwable error) {
@@ -320,6 +330,7 @@ const buildJavaRunnerSource = (challenge: CodingChallenge) => {
         ${toStringLiteral(testCase.id)},
         ${toStringLiteral(testCase.title)},
         false,
+        ${toStringLiteral(testCase.visibility ?? "sample")},
         error.getMessage() == null ? error.toString() : error.getMessage()
       ));
     }`;
@@ -333,12 +344,14 @@ public class Main {
     final String id;
     final String title;
     final boolean passed;
+    final String visibility;
     final String details;
 
-    TestResult(String id, String title, boolean passed, String details) {
+    TestResult(String id, String title, boolean passed, String visibility, String details) {
       this.id = id;
       this.title = title;
       this.passed = passed;
+      this.visibility = visibility;
       this.details = details;
     }
   }
@@ -393,6 +406,7 @@ public class Main {
         .append("\\"id\\":\\"").append(escapeJson(result.id)).append("\\",")
         .append("\\"title\\":\\"").append(escapeJson(result.title)).append("\\",")
         .append("\\"passed\\":").append(result.passed)
+        .append(",\\"visibility\\":\\"").append(escapeJson(result.visibility)).append("\\",")
         .append(",\\"details\\":\\"").append(escapeJson(result.details)).append("\\"")
         .append("}");
     }
@@ -481,19 +495,30 @@ const buildFallbackSummary = (
   code: string,
   explanation: string,
   details: string,
-): CodingExecutionSummary => ({
-  language,
-  code,
-  explanation,
-  passedChecks: 0,
-  totalChecks: challenge.testCases.length,
-  checkResults: challenge.testCases.map((testCase) => ({
+): CodingExecutionSummary => {
+  const checkResults = challenge.testCases.map((testCase) => ({
     id: testCase.id,
     title: testCase.title,
     passed: false,
     details,
-  })),
-});
+    visibility: testCase.visibility ?? "sample",
+  }));
+  const visibleChecks = checkResults.filter((result) => result.visibility !== "hidden");
+  const hiddenChecks = checkResults.filter((result) => result.visibility === "hidden");
+
+  return {
+    language,
+    code,
+    explanation,
+    passedChecks: 0,
+    totalChecks: challenge.testCases.length,
+    visiblePassedChecks: 0,
+    visibleTotalChecks: visibleChecks.length,
+    hiddenPassedChecks: 0,
+    hiddenTotalChecks: hiddenChecks.length,
+    checkResults,
+  };
+};
 
 const parseRunnerPayload = (
   challenge: CodingChallenge,
@@ -505,6 +530,10 @@ const parseRunnerPayload = (
   const parsed = JSON.parse(payload) as CodingCheckResult[];
   const checkResults = Array.isArray(parsed) ? parsed : [];
   const passedChecks = checkResults.filter((result) => result.passed).length;
+  const visibleChecks = checkResults.filter((result) => result.visibility !== "hidden");
+  const hiddenChecks = checkResults.filter((result) => result.visibility === "hidden");
+  const visiblePassedChecks = visibleChecks.filter((result) => result.passed).length;
+  const hiddenPassedChecks = hiddenChecks.filter((result) => result.passed).length;
 
   return {
     language,
@@ -512,6 +541,10 @@ const parseRunnerPayload = (
     explanation,
     passedChecks,
     totalChecks: checkResults.length,
+    visiblePassedChecks,
+    visibleTotalChecks: visibleChecks.length,
+    hiddenPassedChecks,
+    hiddenTotalChecks: hiddenChecks.length,
     checkResults,
   } satisfies CodingExecutionSummary;
 };

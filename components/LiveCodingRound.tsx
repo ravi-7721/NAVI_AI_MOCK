@@ -38,14 +38,14 @@ type CodingDraft = {
   submitted: boolean;
   askedAt: string;
   answeredAt: string;
+  revealedHintCount: number;
+  runCount: number;
 };
 
 const getSignatureStorageKey = (language: CodingLanguage, count: number) =>
   `live-coding:last-signature:${language}:${count}`;
 
 const buildDrafts = (challenges: CodingChallenge[], language: CodingLanguage) => {
-  const now = new Date().toISOString();
-
   return challenges.reduce<Record<string, CodingDraft>>((accumulator, challenge) => {
     accumulator[challenge.id] = {
       code: getStarterCode(challenge, language),
@@ -53,8 +53,10 @@ const buildDrafts = (challenges: CodingChallenge[], language: CodingLanguage) =>
       lastResult: null,
       coaching: null,
       submitted: false,
-      askedAt: now,
+      askedAt: "",
       answeredAt: "",
+      revealedHintCount: 0,
+      runCount: 0,
     };
 
     return accumulator;
@@ -68,9 +70,27 @@ const buildCodingAnswerSummary = (
 ) => {
   const result = draft.lastResult;
   const checkSummary = result
-    ? `Passed ${result.passedChecks}/${result.totalChecks} checks.\n${result.checkResults
-        .map((check) => `${check.passed ? "PASS" : "FAIL"}: ${check.title} - ${check.details}`)
-        .join("\n")}`
+    ? [
+        `Passed ${result.passedChecks}/${result.totalChecks} checks.`,
+        typeof result.visibleTotalChecks === "number"
+          ? `Sample checks: ${result.visiblePassedChecks || 0}/${result.visibleTotalChecks}.`
+          : null,
+        typeof result.hiddenTotalChecks === "number" && result.hiddenTotalChecks > 0
+          ? `Hidden checks: ${result.hiddenPassedChecks || 0}/${result.hiddenTotalChecks}.`
+          : null,
+        typeof result.attemptCount === "number"
+          ? `Run attempts: ${result.attemptCount}.`
+          : null,
+        typeof result.hintCount === "number" ? `Hints used: ${result.hintCount}.` : null,
+        typeof result.elapsedSeconds === "number"
+          ? `Elapsed: ${Math.max(1, result.elapsedSeconds)} sec.`
+          : null,
+        result.checkResults
+          .map((check) => `${check.passed ? "PASS" : "FAIL"}: ${check.title} - ${check.details}`)
+          .join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n")
     : "Checks not run yet.";
 
   return [
@@ -82,6 +102,16 @@ const buildCodingAnswerSummary = (
     `Explanation:\n${draft.explanation.trim() || "(No explanation provided)"}`,
     `Code:\n${draft.code.trim() || "(No code provided)"}`,
   ].join("\n\n");
+};
+
+const getElapsedSeconds = (startedAt?: string, endedAt?: string) => {
+  if (!startedAt || !endedAt) return 0;
+
+  const start = new Date(startedAt).getTime();
+  const end = new Date(endedAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+
+  return Math.max(1, Math.round((end - start) / 1000));
 };
 
 const LiveCodingRound = ({
@@ -135,6 +165,7 @@ const LiveCodingRound = ({
     interviewId,
   );
   const [startedAt, setStartedAt] = React.useState<string | null>(null);
+  const [clockTick, setClockTick] = React.useState(() => Date.now());
 
   const availableChallenges = React.useMemo(
     () =>
@@ -242,6 +273,36 @@ const LiveCodingRound = ({
   const currentDraft = currentChallenge ? drafts[currentChallenge.id] : null;
   const resultIsStale =
     Boolean(currentDraft?.lastResult) && currentDraft?.lastResult?.code !== currentDraft?.code;
+  const sampleTestCases = React.useMemo(
+    () => currentChallenge?.testCases.filter((testCase) => testCase.visibility !== "hidden") || [],
+    [currentChallenge],
+  );
+  const hiddenTestCases = React.useMemo(
+    () => currentChallenge?.testCases.filter((testCase) => testCase.visibility === "hidden") || [],
+    [currentChallenge],
+  );
+  const sampleCheckResults = React.useMemo(
+    () =>
+      currentDraft?.lastResult?.checkResults.filter((result) => result.visibility !== "hidden") ||
+      [],
+    [currentDraft],
+  );
+  const hiddenCheckResults = React.useMemo(
+    () =>
+      currentDraft?.lastResult?.checkResults.filter((result) => result.visibility === "hidden") ||
+      [],
+    [currentDraft],
+  );
+  const currentElapsedSeconds = React.useMemo(
+    () =>
+      currentDraft?.askedAt
+        ? getElapsedSeconds(
+            currentDraft.askedAt,
+            currentDraft.answeredAt || new Date(clockTick).toISOString(),
+          )
+        : 0,
+    [clockTick, currentDraft?.answeredAt, currentDraft?.askedAt],
+  );
   const isSetupReady =
     setupChallenges.length === Math.min(challengeCount, availableChallenges.length) &&
     (selectionMode !== "custom" || customChallengeIds.length === challengeCount);
@@ -262,6 +323,24 @@ const LiveCodingRound = ({
     },
     [],
   );
+
+  React.useEffect(() => {
+    if (!roundStarted || !currentChallenge || !currentDraft || currentDraft.submitted) return;
+
+    const timerId = window.setInterval(() => {
+      setClockTick(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, [currentChallenge?.id, currentDraft?.submitted, roundStarted]);
+
+  React.useEffect(() => {
+    if (!roundStarted || !currentChallenge || !currentDraft || currentDraft.askedAt) return;
+
+    updateDraft(currentChallenge.id, {
+      askedAt: new Date().toISOString(),
+    });
+  }, [currentChallenge?.id, currentDraft?.askedAt, roundStarted, updateDraft]);
 
   const regenerateRandomPreview = React.useCallback(() => {
     const previousSignature = buildCodingChallengeSignature(randomPreviewChallenges);
@@ -385,21 +464,58 @@ const LiveCodingRound = ({
     setupChallenges,
   ]);
 
+  const handleRevealHint = React.useCallback(() => {
+    if (!currentChallenge || !currentDraft) return;
+    if (currentDraft.revealedHintCount >= currentChallenge.hints.length) return;
+
+    updateDraft(currentChallenge.id, {
+      revealedHintCount: currentDraft.revealedHintCount + 1,
+      submitted: false,
+      coaching: null,
+      lastResult: currentDraft.lastResult
+        ? {
+            ...currentDraft.lastResult,
+            hintCount: currentDraft.revealedHintCount + 1,
+          }
+        : currentDraft.lastResult,
+    });
+  }, [currentChallenge, currentDraft, updateDraft]);
+
+  const executeChallengeChecks = React.useCallback(
+    async (challenge: CodingChallenge, draft: CodingDraft, nextRunCount: number) => {
+      const baseResult = await runLiveCodingChecks({
+        challenge,
+        language: selectedLanguage,
+        code: draft.code,
+        explanation: draft.explanation,
+      });
+
+      return {
+        ...baseResult,
+        attemptCount: nextRunCount,
+        hintCount: draft.revealedHintCount,
+        elapsedSeconds: getElapsedSeconds(draft.askedAt, new Date().toISOString()),
+      } satisfies CodingExecutionSummary;
+    },
+    [selectedLanguage],
+  );
+
   const handleRunChecks = React.useCallback(async () => {
     if (!currentChallenge || !currentDraft) return;
 
     setIsRunningChecks(true);
 
     try {
-      const result = await runLiveCodingChecks({
-        challenge: currentChallenge,
-        language: selectedLanguage,
-        code: currentDraft.code,
-        explanation: currentDraft.explanation,
-      });
+      const nextRunCount = currentDraft.runCount + 1;
+      const result = await executeChallengeChecks(
+        currentChallenge,
+        currentDraft,
+        nextRunCount,
+      );
 
       updateDraft(currentChallenge.id, {
         lastResult: result,
+        runCount: nextRunCount,
       });
 
       if (result.passedChecks === result.totalChecks) {
@@ -410,7 +526,7 @@ const LiveCodingRound = ({
     } finally {
       setIsRunningChecks(false);
     }
-  }, [currentChallenge, currentDraft, selectedLanguage, updateDraft]);
+  }, [currentChallenge, currentDraft, executeChallengeChecks, updateDraft]);
 
   const handleSubmitChallenge = React.useCallback(async () => {
     if (!currentChallenge || !currentDraft) return;
@@ -422,19 +538,25 @@ const LiveCodingRound = ({
     setIsSubmitting(true);
 
     try {
-      const result =
+      const needsFreshRun =
         currentDraft.lastResult &&
         currentDraft.lastResult.code === currentDraft.code &&
         currentDraft.lastResult.language === selectedLanguage
+          ? false
+          : true;
+      const nextRunCount = currentDraft.runCount + (needsFreshRun ? 1 : 0);
+      const baseResult =
+        !needsFreshRun && currentDraft.lastResult
           ? currentDraft.lastResult
-          : await runLiveCodingChecks({
-              challenge: currentChallenge,
-              language: selectedLanguage,
-              code: currentDraft.code,
-              explanation: currentDraft.explanation,
-            });
+          : await executeChallengeChecks(currentChallenge, currentDraft, nextRunCount);
 
       const answeredAt = new Date().toISOString();
+      const result = {
+        ...baseResult,
+        attemptCount: nextRunCount,
+        hintCount: currentDraft.revealedHintCount,
+        elapsedSeconds: getElapsedSeconds(currentDraft.askedAt, answeredAt),
+      } satisfies CodingExecutionSummary;
       const summary = buildCodingAnswerSummary(
         currentChallenge,
         {
@@ -458,6 +580,7 @@ const LiveCodingRound = ({
         coaching,
         submitted: true,
         answeredAt,
+        runCount: nextRunCount,
       });
 
       const isLastChallenge = currentIndex >= sessionChallenges.length - 1;
@@ -474,6 +597,7 @@ const LiveCodingRound = ({
     currentChallenge,
     currentDraft,
     currentIndex,
+    executeChallengeChecks,
     resolvedInterviewId,
     selectedLanguage,
     sessionChallenges.length,
@@ -500,6 +624,16 @@ const LiveCodingRound = ({
             explanation: draft.explanation,
             passedChecks: 0,
             totalChecks: challenge.testCases.length,
+            visiblePassedChecks: 0,
+            visibleTotalChecks: challenge.testCases.filter((testCase) => testCase.visibility !== "hidden").length,
+            hiddenPassedChecks: 0,
+            hiddenTotalChecks: challenge.testCases.filter((testCase) => testCase.visibility === "hidden").length,
+            attemptCount: draft.runCount,
+            hintCount: draft.revealedHintCount,
+            elapsedSeconds: getElapsedSeconds(
+              draft.askedAt,
+              draft.answeredAt || new Date().toISOString(),
+            ),
             checkResults: [],
           } as CodingExecutionSummary);
 
@@ -514,7 +648,7 @@ const LiveCodingRound = ({
             },
             selectedLanguage,
           ),
-          askedAt: draft.askedAt,
+          askedAt: draft.askedAt || startedAt || new Date().toISOString(),
           answeredAt: draft.answeredAt || new Date().toISOString(),
           wasFollowUp: false,
           followUpToQuestionId: null,
@@ -602,10 +736,10 @@ const LiveCodingRound = ({
               Multi-language runner
             </span>
             <span className="rounded-full border border-white/10 px-3 py-1 text-sm text-light-100">
-              Random + custom challenge sets
+              Hidden + sample checks
             </span>
             <span className="rounded-full border border-white/10 px-3 py-1 text-sm text-light-100">
-              Replay + report
+              Progressive hints + replay
             </span>
           </div>
         </section>
@@ -901,8 +1035,9 @@ const LiveCodingRound = ({
               <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
                 <p className="text-sm text-light-400">What you get</p>
                 <p className="mt-2 text-white">
-                  Each challenge includes starter code, test cases, coaching after submission,
-                  and stored replay/report support.
+                  Each challenge includes starter code, visible sample checks, hidden edge-case
+                  checks, progressive hints, coaching after submission, and stored replay/report
+                  support.
                 </p>
               </div>
             </div>
@@ -928,7 +1063,7 @@ const LiveCodingRound = ({
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-4">
           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
             <p className="text-sm text-light-400">Progress</p>
             <p className="mt-1 text-lg text-white">
@@ -938,6 +1073,12 @@ const LiveCodingRound = ({
           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
             <p className="text-sm text-light-400">Runtime</p>
             <p className="mt-1 text-lg text-white">{getCodingLanguageLabel(selectedLanguage)}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+            <p className="text-sm text-light-400">Attempts</p>
+            <p className="mt-1 text-lg text-white">
+              {currentDraft.runCount}
+            </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
             <p className="text-sm text-light-400">Checks</p>
@@ -1014,14 +1155,37 @@ const LiveCodingRound = ({
 
             <div className="mt-6 grid gap-4 lg:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <p className="text-sm text-light-400">Hints</p>
-                <ul className="mt-3 space-y-2">
-                  {currentChallenge.hints.map((hint) => (
-                    <li key={hint} className="text-sm text-light-100">
-                      {hint}
-                    </li>
-                  ))}
-                </ul>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-light-400">Hints</p>
+                  <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-light-400">
+                    {currentDraft.revealedHintCount}/{currentChallenge.hints.length} revealed
+                  </span>
+                </div>
+                {currentDraft.revealedHintCount > 0 ? (
+                  <ul className="mt-3 space-y-2">
+                    {currentChallenge.hints
+                      .slice(0, currentDraft.revealedHintCount)
+                      .map((hint) => (
+                        <li key={hint} className="text-sm text-light-100">
+                          {hint}
+                        </li>
+                      ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-light-100">
+                    Keep the stronger hints hidden until you actually need them.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={handleRevealHint}
+                  disabled={currentDraft.revealedHintCount >= currentChallenge.hints.length}
+                  className="btn-secondary mt-4"
+                >
+                  {currentDraft.revealedHintCount >= currentChallenge.hints.length
+                    ? "All Hints Revealed"
+                    : "Reveal Next Hint"}
+                </button>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -1050,8 +1214,8 @@ const LiveCodingRound = ({
             <div className="card p-6">
               <p className="text-sm uppercase tracking-[0.2em] text-light-400">Run checks</p>
               <div className="mt-4 grid gap-3">
-                {currentChallenge.testCases.map((testCase) => {
-                  const matchingResult = currentDraft.lastResult?.checkResults.find(
+                {sampleTestCases.map((testCase) => {
+                  const matchingResult = sampleCheckResults.find(
                     (result) => result.id === testCase.id,
                   );
 
@@ -1091,6 +1255,46 @@ const LiveCodingRound = ({
                     </div>
                   );
                 })}
+
+                <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-white">Hidden edge-case checks</p>
+                    <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-light-400">
+                      {currentDraft.lastResult
+                        ? `${currentDraft.lastResult.hiddenPassedChecks || 0}/${currentDraft.lastResult.hiddenTotalChecks || hiddenTestCases.length}`
+                        : `${hiddenTestCases.length} locked`}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-light-100">
+                    Hidden checks run on execute and submit without exposing their inputs, so the
+                    round can catch edge cases instead of only sample-case solutions.
+                  </p>
+                  {hiddenCheckResults.length > 0 ? (
+                    <div className="mt-3 grid gap-2">
+                      {hiddenCheckResults.map((result) => (
+                        <div
+                          key={result.id}
+                          className="rounded-xl border border-white/10 bg-white/5 p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm text-white">{result.title}</p>
+                            <span
+                              className={cn(
+                                "rounded-full border px-3 py-1 text-xs",
+                                result.passed
+                                  ? "border-emerald-400/30 text-emerald-300"
+                                  : "border-red-400/30 text-red-300",
+                              )}
+                            >
+                              {result.passed ? "Passed" : "Failed"}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm text-light-100">{result.details}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
@@ -1121,6 +1325,38 @@ const LiveCodingRound = ({
                     </div>
                   </div>
                   <p className="text-sm text-white">{currentDraft.coaching.quickTip}</p>
+                  {currentDraft.coaching.deliveryNote ? (
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-sm text-light-400">Explanation note</p>
+                      <p className="mt-2 text-light-100">{currentDraft.coaching.deliveryNote}</p>
+                    </div>
+                  ) : null}
+                  {currentDraft.coaching.improvedAnswer ? (
+                    <div className="rounded-2xl border border-primary-200/20 bg-primary-200/8 p-4">
+                      <p className="text-sm text-light-400">Stronger explanation</p>
+                      <p className="mt-2 text-light-100">{currentDraft.coaching.improvedAnswer}</p>
+                    </div>
+                  ) : null}
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-sm text-light-400">Elapsed</p>
+                      <p className="mt-1 text-white">
+                        {currentDraft.lastResult?.elapsedSeconds || currentElapsedSeconds}s
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-sm text-light-400">Hints used</p>
+                      <p className="mt-1 text-white">
+                        {currentDraft.lastResult?.hintCount ?? currentDraft.revealedHintCount}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-sm text-light-400">Run attempts</p>
+                      <p className="mt-1 text-white">
+                        {currentDraft.lastResult?.attemptCount ?? currentDraft.runCount}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <p className="mt-4 text-sm text-light-400">

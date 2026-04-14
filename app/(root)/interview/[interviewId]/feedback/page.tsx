@@ -67,11 +67,6 @@ const Page = async ({ params }: PageProps) => {
     <div className="mx-auto w-full max-w-3xl rounded-2xl border border-white/15 bg-black/40 p-4 shadow-[0_0_30px_rgba(255,255,255,0.06)] backdrop-blur-sm sm:p-6">
       <div className="mb-2 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
         <h1 className="text-2xl font-bold">Interview Report</h1>
-        {data.fallbackUsed && (
-          <span className="rounded-full border border-amber-300/40 bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-200">
-            Fallback Report
-          </span>
-        )}
       </div>
       <p className="mb-4 text-gray-300">
         Candidate: <span className="font-bold text-white">{candidateName}</span>

@@ -17,14 +17,14 @@ const LeaderboardPage = async () => {
             Rankings are based on average score, consistency, and improvement trend.
             Use it to benchmark your progress against other candidates.
           </p>
-          <div className="flex flex-wrap gap-3">
+          {/* <div className="flex flex-wrap gap-3">
             <Button asChild className="btn-primary">
               <Link href="/interview">Attempt New Interview</Link>
             </Button>
             <Button asChild className="btn-secondary">
               <Link href="/dashboard">Back to Dashboard</Link>
             </Button>
-          </div>
+          </div> */}
         </div>
       </section>
 

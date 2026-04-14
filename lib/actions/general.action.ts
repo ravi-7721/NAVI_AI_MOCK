@@ -197,6 +197,8 @@ const answerCoachingSchema = z.object({
   strengths: z.array(z.string().min(1)).min(1).max(3),
   improvements: z.array(z.string().min(1)).min(1).max(3),
   quickTip: z.string().min(1),
+  improvedAnswer: z.string().min(1).optional(),
+  deliveryNote: z.string().min(1).optional(),
   shouldAskFollowUp: z.boolean(),
   suggestedFollowUpQuestion: z.string().optional(),
 });
@@ -225,6 +227,45 @@ const normalizeCodingLanguage = (value?: string): CodingLanguage =>
 const getLevelFromXp = (xp: number) => Math.max(1, Math.floor(xp / 250) + 1);
 
 const startOfDayKey = (value: string) => value.slice(0, 10);
+
+const buildFallbackImprovedAnswer = (
+  answer: string,
+  roundType: InterviewRoundType,
+) => {
+  const trimmed = answer.trim();
+
+  if (roundType === "live-coding") {
+    return trimmed
+      ? [
+          "I would structure the explanation like this:",
+          "First, restate the approach in one line.",
+          "Then explain the main data structure or loop.",
+          "Call out time and space complexity.",
+          "Finish with the edge cases the solution handles.",
+        ].join(" ")
+      : "I would start by stating the approach, then explain complexity, edge cases, and why the solution passes the required checks.";
+  }
+
+  if (!trimmed || trimmed === "(No answer)") {
+    return roundType === "video"
+      ? "I would introduce myself briefly, give one relevant example, and end with the result or value I can bring to the role."
+      : "I would answer with a short context, a concrete example, the action I took, and the result.";
+  }
+
+  const firstSentence =
+    trimmed.split(/(?<=[.!?])\s+/).find(Boolean) || trimmed.slice(0, 140);
+
+  return roundType === "video"
+    ? `${firstSentence} One concrete example is the strongest part of my background, and the result shows why I fit this role now.`
+    : `${firstSentence} I would strengthen it by adding a clearer example, the decision I made, and the measurable outcome.`;
+};
+
+const buildFallbackDeliveryNote = (roundType: InterviewRoundType) =>
+  roundType === "video"
+    ? "Keep the camera line steady, answer in short blocks, and land the result confidently in the final sentence."
+    : roundType === "live-coding"
+      ? "Explain the algorithm in a clean sequence: approach, complexity, edge cases, then trade-offs."
+      : "Lead with the direct answer, then support it with one specific example and outcome.";
 
 const buildFallbackCoaching = (params: {
   question: string;
@@ -293,6 +334,8 @@ const buildFallbackCoaching = (params: {
         passRatio < 1
           ? "Start with correctness: fix the failing checks, then explain complexity and edge cases."
           : "Strong baseline. Add complexity analysis and boundary-case reasoning to finish the answer well.",
+      improvedAnswer: buildFallbackImprovedAnswer(answer, roundType),
+      deliveryNote: buildFallbackDeliveryNote(roundType),
       shouldAskFollowUp,
       suggestedFollowUpQuestion: shouldAskFollowUp
         ? "Which edge cases or complexity trade-offs would you revisit before shipping this solution?"
@@ -334,6 +377,8 @@ const buildFallbackCoaching = (params: {
         : mentionsNumbers
           ? "Tighten the structure so the strongest point lands first."
           : "Use a brief STAR-style structure and include one measurable outcome.",
+    improvedAnswer: buildFallbackImprovedAnswer(answer, roundType),
+    deliveryNote: buildFallbackDeliveryNote(roundType),
     shouldAskFollowUp,
     suggestedFollowUpQuestion: shouldAskFollowUp
       ? roundType === "technical"
@@ -706,6 +751,9 @@ Candidate answer:
 ${answer}
 
 Return compact coaching only. Score clarity, relevance, and depth from 0 to 100.
+Also return:
+- improvedAnswer: a stronger rewritten version of the candidate answer
+- deliveryNote: one short note about delivery style or explanation flow
 If the answer is weak, vague, or incomplete, set shouldAskFollowUp to true and propose one sharp follow-up question.
 `,
       system:
@@ -725,6 +773,8 @@ If the answer is weak, vague, or incomplete, set shouldAskFollowUp to true and p
       strengths: object.strengths.filter(Boolean).slice(0, 3),
       improvements: object.improvements.filter(Boolean).slice(0, 3),
       quickTip: object.quickTip.trim(),
+      improvedAnswer: object.improvedAnswer?.trim(),
+      deliveryNote: object.deliveryNote?.trim(),
       shouldAskFollowUp: object.shouldAskFollowUp,
       suggestedFollowUpQuestion: object.suggestedFollowUpQuestion?.trim(),
     };

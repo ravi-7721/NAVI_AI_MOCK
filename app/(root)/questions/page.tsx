@@ -17,7 +17,7 @@ const QuestionsPage = async () => {
 
   return (
     <div className="flex flex-col gap-8">
-      <section className="card-cta !py-8">
+      {/* <section className="card-cta !py-8">
         <div className="flex flex-col gap-4 max-w-2xl">
           <h2>Question Bank</h2>
           <p className="text-base">
@@ -33,7 +33,7 @@ const QuestionsPage = async () => {
             </Button>
           </div>
         </div>
-      </section>
+      </section> */}
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="card-border w-full sm:col-span-2 lg:col-span-1">

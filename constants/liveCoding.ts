@@ -235,6 +235,10 @@ const createChallenge = ({
   ...challenge
 }: ChallengeConfig): CodingChallenge => ({
   ...challenge,
+  testCases: challenge.testCases.map((testCase, index) => ({
+    ...testCase,
+    visibility: testCase.visibility ?? (index < 2 ? "sample" : "hidden"),
+  })),
   starterCodeByLanguage: buildStarterCodeByLanguage({
     defaultEntryPoint: challenge.functionName,
     entryPointByLanguage,

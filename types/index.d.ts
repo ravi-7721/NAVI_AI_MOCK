@@ -53,6 +53,7 @@ interface CodingChallengeTestCase {
   args: unknown[];
   expected: unknown;
   explanation?: string;
+  visibility?: "sample" | "hidden";
 }
 
 interface CodingChallenge {
@@ -79,6 +80,7 @@ interface CodingCheckResult {
   title: string;
   passed: boolean;
   details: string;
+  visibility?: "sample" | "hidden";
 }
 
 interface CodingExecutionSummary {
@@ -87,7 +89,23 @@ interface CodingExecutionSummary {
   explanation: string;
   passedChecks: number;
   totalChecks: number;
+  visiblePassedChecks?: number;
+  visibleTotalChecks?: number;
+  hiddenPassedChecks?: number;
+  hiddenTotalChecks?: number;
+  attemptCount?: number;
+  hintCount?: number;
+  elapsedSeconds?: number;
   checkResults: CodingCheckResult[];
+}
+
+interface AnswerDeliveryMetrics {
+  wordCount: number;
+  durationSeconds: number;
+  wordsPerMinute: number;
+  fillerCount: number;
+  pauseCount: number;
+  confidenceScore: number;
 }
 
 interface InterviewModeDefinition {
@@ -113,6 +131,8 @@ interface AnswerCoaching {
   strengths: string[];
   improvements: string[];
   quickTip: string;
+  improvedAnswer?: string;
+  deliveryNote?: string;
   shouldAskFollowUp: boolean;
   suggestedFollowUpQuestion?: string;
   updatedAt: string;
@@ -127,6 +147,7 @@ interface ReplayQuestionEntry {
   wasFollowUp: boolean;
   followUpToQuestionId?: string | null;
   coachingId?: string;
+  deliveryMetrics?: AnswerDeliveryMetrics;
   codingSummary?: CodingExecutionSummary;
 }
 

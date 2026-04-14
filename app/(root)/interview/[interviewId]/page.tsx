@@ -1,8 +1,7 @@
 import { getCurrentUser } from "@/lib/actions/auth.action";
 import { getInterviewById } from "@/lib/actions/general.action";
 import Agent from "@/components/Agent";
-import LiveCodingRound from "@/components/LiveCodingRound";
-import { LIVE_CODING_CHALLENGES } from "@/constants";
+import InterviewModePlaceholder from "@/components/InterviewModePlaceholder";
 
 interface PageProps {
   params: Promise<{
@@ -37,20 +36,13 @@ const Page = async ({ params, searchParams }: PageProps) => {
     );
   }
 
-  const codingChallenges =
-    interview.roundType === "live-coding"
-      ? (() => {
-          const ids = interview.codingChallengeIds || [];
-          const byId = new Map(LIVE_CODING_CHALLENGES.map((challenge) => [challenge.id, challenge]));
-
-          if (ids.length > 0) {
-            return ids.map((id) => byId.get(id)).filter(Boolean) as CodingChallenge[];
-          }
-
-          const questionTitles = new Set(interview.questions || []);
-          return LIVE_CODING_CHALLENGES.filter((challenge) => questionTitles.has(challenge.title));
-        })()
-      : [];
+  const isDisabledRound =
+    interview.roundType === "full-loop" ||
+    interview.roundType === "video" ||
+    interview.roundType === "live-coding";
+  const disabledMode = isDisabledRound
+    ? (interview.roundType as "full-loop" | "video" | "live-coding")
+    : null;
 
   return (
     <>
@@ -58,14 +50,13 @@ const Page = async ({ params, searchParams }: PageProps) => {
         <h3>Interview generation</h3>
       </div>
 
-      {interview.roundType === "live-coding" ? (
-        <LiveCodingRound
-          userName={user?.name ?? "Candidate"}
-          userId={user?.id}
-          interviewId={interview.id}
-          challenges={codingChallenges}
-          autoStart={autostart === "1"}
-          initialLanguage={interview.codingLanguage || "javascript"}
+      {disabledMode ? (
+        <InterviewModePlaceholder
+          mode={disabledMode}
+          primaryHref={`/interview/${interview.id}/feedback`}
+          primaryLabel="Open Feedback"
+          secondaryHref="/interview-history"
+          secondaryLabel="Interview History"
         />
       ) : (
         <Agent

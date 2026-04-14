@@ -83,7 +83,7 @@ const ProfilePage = async ({ searchParams }: ProfilePageProps) => {
 
   return (
     <div className="flex flex-col gap-8">
-      <section className="card-cta !py-8">
+      {/* <section className="card-cta !py-8">
         <div className="flex max-w-3xl flex-col gap-4">
           <h2>Profile</h2>
           <p className="text-base">
@@ -100,7 +100,7 @@ const ProfilePage = async ({ searchParams }: ProfilePageProps) => {
             </Button>
           </div>
         </div>
-      </section>
+      </section> */}
 
       {resolvedSearchParams?.updated === "1" && (
         <div className="rounded-xl border border-success-100/40 bg-success-100/10 p-4 text-success-100">
@@ -211,7 +211,7 @@ const ProfilePage = async ({ searchParams }: ProfilePageProps) => {
         </div>
       </section>
 
-      <section className="card-border w-full">
+      {/* <section className="card-border w-full">
         <div className="card flex flex-col gap-4 p-6">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-xl">Preferred Tech Stack</h3>
@@ -237,7 +237,7 @@ const ProfilePage = async ({ searchParams }: ProfilePageProps) => {
             </div>
           </div>
         </div>
-      </section>
+      </section> */}
 
       <section className="card-border w-full">
         <div className="card p-6">
@@ -366,10 +366,10 @@ const ProfilePage = async ({ searchParams }: ProfilePageProps) => {
 
             <div className="flex flex-wrap gap-3">
               <Button type="submit" className="btn-primary">
-                Save Personal Info
+                Save Changes
               </Button>
               <Button asChild className="btn-secondary">
-                <Link href="/settings">Edit Interview Settings</Link>
+                {/* <Link href="/settings">Edit Interview Settings</Link> */}
               </Button>
             </div>
           </form>

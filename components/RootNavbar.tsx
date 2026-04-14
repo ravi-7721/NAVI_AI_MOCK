@@ -4,15 +4,11 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  BarChart3,
-  Bell,
   BriefcaseBusiness,
-  Building2,
   ChevronDown,
   CircleHelp,
   FileQuestion,
   FileText,
-  Gauge,
   Headphones,
   History,
   Home,
@@ -41,19 +37,15 @@ const allLinks: NavLink[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/logic-arena", label: "Logic Arena", icon: Sparkles },
   { href: "/interview", label: "Interview", icon: BriefcaseBusiness },
-  { href: "/interview-history", label: "History", icon: History },
-  { href: "/profile", label: "Profile", icon: User },
+  // { href: "/interview-history", label: "History", icon: History },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/tech-stack-explorer", label: "Tech Explorer", icon: Gauge },
-  { href: "/companies", label: "Companies", icon: Building2 },
-  { href: "/notifications", label: "Notifications", icon: Bell },
+  { href: "/profile", label: "Profile", icon: User },
   { href: "/resume-lab", label: "Resume Lab", icon: FileText },
   { href: "/questions", label: "Questions", icon: FileQuestion },
   { href: "/about", label: "About", icon: Users },
-  { href: "/contact-support", label: "Support", icon: Headphones },
-  { href: "/faq", label: "FAQ", icon: CircleHelp },
-  { href: "/settings", label: "Settings", icon: Settings },
+  // { href: "/contact-support", label: "Support", icon: Headphones },
+  // { href: "/faq", label: "FAQ", icon: CircleHelp },
+  // { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 const primaryLinkHrefs = new Set([
@@ -62,7 +54,8 @@ const primaryLinkHrefs = new Set([
   "/logic-arena",
   "/interview",
   "/interview-history",
-  "/profile",
+  "/leaderboard",
+  "/profile"
 ]);
 
 const primaryLinks = allLinks.filter((item) => primaryLinkHrefs.has(item.href));
@@ -174,11 +167,7 @@ const RootNavbar = ({ logoutAction }: RootNavbarProps) => {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Link href="/api/desktop-download" className="header-download">
-            Download App
-          </Link>
-
+        <div className="header-nav__actions">
           <form action={logoutAction}>
             <Button type="submit" className="header-logout">
               Logout

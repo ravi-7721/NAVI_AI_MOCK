@@ -1,7 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { BrainCircuit, Code2, Crown, RefreshCcw, Sparkles, Timer } from "lucide-react";
+import {
+  BrainCircuit,
+  Code2,
+  Crown,
+  RefreshCcw,
+  Sparkles,
+  Timer,
+} from "lucide-react";
 
 import {
   LOGIC_ARENA_DIFFICULTIES,
@@ -9,7 +16,6 @@ import {
   LOGIC_ARENA_QUESTION_LIMITS,
   LOGIC_ARENA_STACKS,
 } from "@/constants/game";
-import ClassicGamesHub from "@/components/ClassicGamesHub";
 
 type GameQuestion = {
   id: string;
@@ -40,7 +46,6 @@ const clampCount = (value: number) =>
   Math.min(Math.max(value, LOGIC_ARENA_QUESTION_LIMITS.min), LOGIC_ARENA_QUESTION_LIMITS.max);
 
 const LogicArena = () => {
-  const [arenaView, setArenaView] = React.useState<"quiz" | "classic">("quiz");
   const [stack, setStack] = React.useState<string>("JavaScript");
   const [difficulty, setDifficulty] = React.useState<string>("Intermediate");
   const [mode, setMode] = React.useState<string>("concept-sprint");
@@ -211,49 +216,17 @@ const LogicArena = () => {
   return (
     <div className="flex flex-col gap-8">
       <section className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,22,38,0.96),rgba(9,12,21,0.96))] p-3">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => setArenaView("quiz")}
-            className={`rounded-[22px] border px-5 py-4 text-left transition-all ${
-              arenaView === "quiz"
-                ? "border-primary-200/45 bg-primary-200/12 shadow-[0_0_24px_rgba(202,197,254,0.16)]"
-                : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.07]"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Code2 className="size-5 text-primary-100" />
-              <h2 className="text-lg text-white">Quiz Arena</h2>
-            </div>
-            <p className="mt-2 text-sm text-light-400">
-              AI-generated MCQ rounds by stack, difficulty, and mode.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setArenaView("classic")}
-            className={`rounded-[22px] border px-5 py-4 text-left transition-all ${
-              arenaView === "classic"
-                ? "border-primary-200/45 bg-primary-200/12 shadow-[0_0_24px_rgba(202,197,254,0.16)]"
-                : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.07]"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <BrainCircuit className="size-5 text-primary-100" />
-              <h2 className="text-lg text-white">Classic Games</h2>
-            </div>
-            <p className="mt-2 text-sm text-light-400">
-              Sudoku, chess, crossword, and wordle with built-in tutorials.
-            </p>
-          </button>
+        <div className="rounded-[22px] border border-primary-200/45 bg-primary-200/12 px-5 py-4 text-left shadow-[0_0_24px_rgba(202,197,254,0.16)]">
+          <div className="flex items-center gap-2">
+            <Code2 className="size-5 text-primary-100" />
+            <h2 className="text-lg text-white">Quiz Arena</h2>
+          </div>
+          <p className="mt-2 text-sm text-light-400">
+            AI-generated MCQ rounds by stack, difficulty, and mode.
+          </p>
         </div>
       </section>
 
-      {arenaView === "classic" ? <ClassicGamesHub /> : null}
-
-      {arenaView === "quiz" ? (
-        <>
       <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(202,197,254,0.18),transparent_30%),linear-gradient(135deg,rgba(18,22,38,0.98),rgba(8,10,18,0.98))] p-6 sm:p-8">
         <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.04),transparent)] opacity-60" />
         <div className="relative grid gap-8 xl:grid-cols-[1.25fr_0.85fr]">
@@ -563,8 +536,6 @@ const LogicArena = () => {
           ) : null}
         </div>
       </section>
-        </>
-      ) : null}
     </div>
   );
 };

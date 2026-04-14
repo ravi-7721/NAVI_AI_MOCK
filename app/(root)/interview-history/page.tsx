@@ -105,7 +105,7 @@ const InterviewHistoryPage = async () => {
 
   return (
     <div className="flex flex-col gap-8">
-      <section className="card-cta !py-8">
+      {/* <section className="card-cta !py-8">
         <div className="flex max-w-3xl flex-col gap-4">
           <h2>Interview History</h2>
           <p className="text-base">
@@ -121,7 +121,7 @@ const InterviewHistoryPage = async () => {
             </Button>
           </div>
         </div>
-      </section>
+      </section> */}
 
       {interviews?.length ? (
         <div className="flex flex-col gap-8">

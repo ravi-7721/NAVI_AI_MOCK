@@ -74,6 +74,35 @@ const Page = async ({ params }: PageProps) => {
                   <h3 className="mt-4 text-lg text-white">{item.question}</h3>
                   {item.codingSummary ? (
                     <div className="mt-4 grid gap-4">
+                      <div className="grid gap-3 sm:grid-cols-4">
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                          <p className="text-sm text-light-400">Attempts</p>
+                          <p className="mt-1 text-white">
+                            {item.codingSummary.attemptCount ?? "--"}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                          <p className="text-sm text-light-400">Hints Used</p>
+                          <p className="mt-1 text-white">
+                            {item.codingSummary.hintCount ?? "--"}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                          <p className="text-sm text-light-400">Sample Checks</p>
+                          <p className="mt-1 text-white">
+                            {item.codingSummary.visiblePassedChecks ?? item.codingSummary.passedChecks}/
+                            {item.codingSummary.visibleTotalChecks ?? item.codingSummary.totalChecks}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                          <p className="text-sm text-light-400">Hidden Checks</p>
+                          <p className="mt-1 text-white">
+                            {item.codingSummary.hiddenPassedChecks ?? 0}/
+                            {item.codingSummary.hiddenTotalChecks ?? 0}
+                          </p>
+                        </div>
+                      </div>
+
                       <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="text-sm text-light-400">Code submission</p>
@@ -121,7 +150,33 @@ const Page = async ({ params }: PageProps) => {
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-3 text-light-100">{item.answer || "(No answer)"}</p>
+                    <>
+                      <p className="mt-3 text-light-100">{item.answer || "(No answer)"}</p>
+                      {item.deliveryMetrics ? (
+                        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-sm text-light-400">Confidence</p>
+                            <p className="mt-1 text-white">
+                              {item.deliveryMetrics.confidenceScore}/100
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-sm text-light-400">Pace</p>
+                            <p className="mt-1 text-white">
+                              {item.deliveryMetrics.wordsPerMinute} wpm
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-sm text-light-400">Fillers</p>
+                            <p className="mt-1 text-white">{item.deliveryMetrics.fillerCount}</p>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-sm text-light-400">Pauses</p>
+                            <p className="mt-1 text-white">{item.deliveryMetrics.pauseCount}</p>
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
                   )}
 
                   {itemCoaching ? (
@@ -146,6 +201,20 @@ const Page = async ({ params }: PageProps) => {
                       </div>
 
                       <p className="text-sm text-white">{itemCoaching.quickTip}</p>
+
+                      {itemCoaching.deliveryNote ? (
+                        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                          <p className="text-sm text-light-400">Delivery note</p>
+                          <p className="mt-2 text-light-100">{itemCoaching.deliveryNote}</p>
+                        </div>
+                      ) : null}
+
+                      {itemCoaching.improvedAnswer ? (
+                        <div className="rounded-2xl border border-primary-200/20 bg-primary-200/8 p-4">
+                          <p className="text-sm text-light-400">Stronger answer</p>
+                          <p className="mt-2 text-light-100">{itemCoaching.improvedAnswer}</p>
+                        </div>
+                      ) : null}
 
                       {itemCoaching.suggestedFollowUpQuestion ? (
                         <p className="text-sm text-light-100">

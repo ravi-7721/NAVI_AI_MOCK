@@ -1,5 +1,5 @@
 import Agent from "@/components/Agent";
-import LiveCodingRound from "@/components/LiveCodingRound";
+import InterviewModePlaceholder from "@/components/InterviewModePlaceholder";
 import { getCurrentUser } from "@/lib/actions/auth.action";
 import { getInterviewModes } from "@/lib/actions/general.action";
 import { cn } from "@/lib/utils";
@@ -107,6 +107,7 @@ const Page = async ({ searchParams }: PageProps) => {
   const user = await getCurrentUser();
   const modes = await getInterviewModes();
   const { round } = await searchParams;
+  const visibleModes = modes.filter((mode) => mode.id !== "full-loop");
   const activeRound =
     round === "hr" ||
     round === "managerial" ||
@@ -118,6 +119,14 @@ const Page = async ({ searchParams }: PageProps) => {
       : "technical";
   const activeVisual = MODE_VISUALS[activeRound] || MODE_VISUALS.technical;
   const ActiveRoundIcon = activeVisual.icon;
+  const isDisabledRound =
+    activeRound === "full-loop" ||
+    activeRound === "video" ||
+    activeRound === "live-coding";
+  const disabledMode = isDisabledRound
+    ? (activeRound as "full-loop" | "video" | "live-coding")
+    : null;
+  const selectedMode = modes.find((mode) => mode.id === activeRound);
 
   return (
     <>
@@ -126,26 +135,28 @@ const Page = async ({ searchParams }: PageProps) => {
           <h3>Interview generation</h3>
         </div>
 
-        <div className="grid gap-3 xl:grid-cols-6">
-          {modes.map((mode) => {
+        <div className="grid gap-3 xl:grid-cols-5">
+          {visibleModes.map((mode) => {
             const visual = MODE_VISUALS[mode.id] || MODE_VISUALS.technical;
             const Icon = visual.icon;
             const isActive = activeRound === mode.id;
-            const isSpotlight = mode.id === "video" || mode.id === "live-coding";
+            const isDisabledMode = mode.id === "video" || mode.id === "live-coding";
+            const isSpotlight = isDisabledMode;
+            const cardClassName = cn(
+              "group relative overflow-hidden rounded-2xl border px-4 py-4 transition-all duration-300",
+              isDisabledMode
+                ? "cursor-pointer select-none"
+                : "hover:-translate-y-0.5",
+              isActive ? visual.activeCard : visual.idleCard,
+            );
 
-            return (
-              <Link
-                key={mode.id}
-                href={`/interview?round=${mode.id}`}
-                className={cn(
-                  "group relative overflow-hidden rounded-2xl border px-4 py-4 transition-all duration-300 hover:-translate-y-0.5",
-                  isActive ? visual.activeCard : visual.idleCard,
-                )}
-              >
+            const cardContent = (
+              <>
                 {(isSpotlight || isActive) && (
                   <span
                     className={cn(
-                      "pointer-events-none absolute -right-8 -top-8 size-24 rounded-full blur-3xl transition-transform duration-300 group-hover:scale-110",
+                      "pointer-events-none absolute -right-8 -top-8 size-24 rounded-full blur-3xl transition-transform duration-300",
+                      !isDisabledMode && "group-hover:scale-110",
                       visual.glow,
                     )}
                   />
@@ -169,7 +180,8 @@ const Page = async ({ searchParams }: PageProps) => {
 
                     <span
                       className={cn(
-                        "inline-flex rounded-xl border p-2.5 transition-all duration-300 group-hover:scale-105",
+                        "inline-flex rounded-xl border p-2.5 transition-all duration-300",
+                        !isDisabledMode && "group-hover:scale-105",
                         isActive ? visual.iconActive : visual.iconIdle,
                       )}
                     >
@@ -183,25 +195,50 @@ const Page = async ({ searchParams }: PageProps) => {
                     <span
                       className={cn(
                         "rounded-full border px-3 py-1",
-                        isSpotlight
+                        isDisabledMode
                           ? "border-white/15 bg-black/25 text-white"
                           : "border-white/10 bg-black/20 text-light-100",
                       )}
                     >
-                      {visual.focus}
+                      {isDisabledMode ? "Preview only" : visual.focus}
                     </span>
                     <span
                       className={cn(
                         "inline-flex items-center gap-1 font-medium transition-transform duration-300",
-                        isActive || isSpotlight
+                        isDisabledMode
                           ? "text-white/90"
-                          : "text-light-400 group-hover:translate-x-1 group-hover:text-light-100",
+                          : isActive
+                            ? "text-white/90"
+                            : "text-light-400 group-hover:translate-x-1 group-hover:text-light-100",
                       )}
                     >
-                      Open <ArrowRight className="size-3.5" />
+                      {isDisabledMode ? "In Progress" : "Open"}
+                      {!isDisabledMode ? <ArrowRight className="size-3.5" /> : null}
                     </span>
                   </div>
                 </div>
+              </>
+            );
+
+            if (isDisabledMode) {
+              return (
+                <div
+                  key={mode.id}
+                  className={cardClassName}
+                  aria-disabled="true"
+                >
+                  {cardContent}
+                </div>
+              );
+            }
+
+            return (
+              <Link
+                key={mode.id}
+                href={`/interview?round=${mode.id}`}
+                className={cardClassName}
+              >
+                {cardContent}
               </Link>
             );
           })}
@@ -224,42 +261,51 @@ const Page = async ({ searchParams }: PageProps) => {
                 Selected Mode
               </p>
               <h4 className="mt-1.5 text-lg font-semibold text-white">
-                {activeRound === "video"
-                  ? "Video Interview Practice"
-                  : activeRound === "live-coding"
-                    ? "Live Coding Workspace"
-                    : modes.find((mode) => mode.id === activeRound)?.name || "Interview Round"}
+                {selectedMode?.name ||
+                  (activeRound === "video"
+                    ? "Video Interview"
+                    : activeRound === "live-coding"
+                      ? "Live Coding"
+                      : activeRound === "full-loop"
+                        ? "Full Loop"
+                        : "Interview Round")}
               </h4>
               <p className="mt-1.5 max-w-2xl text-sm leading-6 text-light-100/88">
                 {activeRound === "video"
-                  ? "Camera-first practice with microphone capture, guided questions, replay, and a dedicated video interview history section."
+                  ? "This mode is still visible as a preview card, but the real video interview flow has been disabled."
                   : activeRound === "live-coding"
-                    ? "Code-first practice with selectable languages, challenge setup, runnable checks, replay, and coding-specific reports."
-                    : "Choose this lane when you want structured interview practice with guided questions and feedback."}
+                    ? "This mode is still visible as a preview card, but the real live coding workflow has been disabled."
+                    : activeRound === "full-loop"
+                      ? "This combined flow has been removed from the active interview module."
+                      : "Choose this lane when you want structured interview practice with guided questions and feedback."}
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-light-100">
-              {activeVisual.focus}
+              {isDisabledRound ? "Unavailable" : activeVisual.focus}
             </span>
             <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-light-100">
               {activeRound === "video"
-                ? "Mic + camera"
+                ? "No mic or camera"
                 : activeRound === "live-coding"
-                  ? "Editor + checks"
-                  : "Q&A flow"}
+                  ? "No editor or checks"
+                  : activeRound === "full-loop"
+                    ? "Removed"
+                    : "Q&A flow"}
             </span>
           </div>
         </div>
       </section>
 
-      {activeRound === "live-coding" ? (
-        <LiveCodingRound
-          key={activeRound}
-          userName={user?.name ?? "Candidate"}
-          userId={user?.id}
+      {disabledMode ? (
+        <InterviewModePlaceholder
+          mode={disabledMode}
+          primaryHref="/interview?round=technical"
+          primaryLabel="Open Technical Round"
+          secondaryHref="/interview?round=managerial"
+          secondaryLabel="Open Managerial Round"
         />
       ) : (
         <Agent
